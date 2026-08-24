@@ -1,0 +1,26 @@
+@import 'tailwindcss';
+
+:root {
+  @apply bg-slate-950;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+.highlight-match {
+  @apply bg-amber-500/30 text-white rounded px-0.5;
+}

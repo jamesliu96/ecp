@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en" class="h-full bg-slate-950">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <link rel="icon" href="/favicon.ico" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#000000" />
+    <title>Encrypted Clipboard</title>
+    <link rel="stylesheet" href="/main.css" />
+  </head>
+  <body
+    class="text-slate-200 h-dvh w-screen flex flex-col overflow-hidden select-none sm:select-auto bg-slate-950"
+  >
+    <div class="flex-1 flex overflow-hidden w-full h-full relative min-h-0">
+      <aside
+        id="sidebar-view"
+        class="w-full md:w-80 flex flex-col h-full bg-slate-900/90 border-r border-slate-800 shrink-0 z-20 min-h-0 transition-all duration-200"
+      >
+        <div
+          class="p-5 border-b border-slate-800 bg-slate-900/95 shrink-0 pt-[max(1.25rem,env(safe-area-inset-top))]"
+        >
+          <div class="flex justify-between items-center mb-4">
+            <div class="flex items-center gap-2">
+              <div
+                class="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-xs shadow-emerald-500/50"
+              ></div>
+              <a
+                class="text-base font-bold text-slate-100 tracking-tight"
+                href="https://github.com/jamesliu96/ecp"
+                target="_blank"
+                rel="noopener"
+              >
+                ECP Node
+              </a>
+            </div>
+            <button
+              id="btn-global-settings"
+              class="text-slate-400 hover:text-slate-100 p-2 rounded-lg hover:bg-slate-800 min-h-11 min-w-11 flex items-center justify-center transition-colors cursor-pointer"
+              aria-label="Global Settings"
+            >
+              <svg
+                class="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                ></path>
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                ></path>
+              </svg>
+            </button>
+          </div>
+          <div
+            class="text-[10px] text-slate-500 mb-1.5 uppercase tracking-widest font-bold"
+          >
+            Local Identity Fingerprint
+          </div>
+          <div
+            id="my-fingerprint"
+            class="font-mono text-[11px] break-all bg-slate-950 p-3 rounded-lg text-emerald-300 border border-slate-800/80 shadow-inner min-h-11 flex items-center select-all"
+          >
+            Loading...
+          </div>
+          <button
+            id="btn-copy-identity"
+            class="mt-3.5 w-full bg-slate-800 hover:bg-slate-700 active:bg-slate-800 border border-slate-700/80 text-slate-100 py-2.5 px-3 rounded-lg text-xs font-semibold min-h-11 transition-all cursor-pointer shadow-xs"
+          >
+            Copy Identity Bundle
+          </button>
+        </div>
+
+        <div
+          class="p-4 flex-1 overflow-y-auto bg-slate-900/40 min-h-0 overscroll-y-contain"
+        >
+          <div class="flex justify-between items-center mb-3">
+            <h2
+              class="text-[11px] font-bold text-slate-500 uppercase tracking-widest"
+            >
+              Peers
+            </h2>
+            <button
+              id="btn-toggle-archived"
+              class="text-[11px] text-slate-400 hover:text-slate-200 font-medium uppercase min-h-9 px-2 -mr-2 cursor-pointer transition-colors"
+            >
+              Show Archived
+            </button>
+          </div>
+          <div id="contacts-list" class="space-y-2"></div>
+        </div>
+
+        <div
+          class="p-4 border-t border-slate-800 bg-slate-900/95 shrink-0 pb-[max(1rem,env(safe-area-inset-bottom))]"
+        >
+          <button
+            id="btn-read-clipboard"
+            class="w-full bg-slate-800 hover:bg-slate-700 text-slate-100 py-2.5 px-4 rounded-lg text-sm font-semibold shadow-xs border border-slate-700/80 min-h-11 mb-2.5 transition-all cursor-pointer"
+          >
+            Read Clipboard Packet
+          </button>
+          <button
+            id="btn-add-contact"
+            class="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-2.5 px-4 rounded-lg text-sm font-semibold shadow-xs min-h-11 transition-all cursor-pointer"
+          >
+            + Link New Peer
+          </button>
+        </div>
+      </aside>
+
+      <main
+        id="chat-view"
+        class="w-full flex-1 hidden md:flex flex-col h-full bg-slate-950 relative z-10 min-h-0"
+      >
+        <header
+          class="px-4 py-3 border-b border-slate-800 bg-slate-900/90 flex justify-between items-center shrink-0 min-h-16 pt-[max(0.75rem,env(safe-area-inset-top))]"
+        >
+          <div class="flex items-center gap-3 w-full max-w-[60%]">
+            <button
+              id="btn-back-mobile"
+              class="md:hidden text-slate-400 hover:text-white p-2 -ml-2 rounded-lg min-h-11 min-w-11 flex items-center justify-center cursor-pointer"
+              aria-label="Back to Sidebar"
+            >
+              <svg
+                class="w-6 h-6"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M15 19l-7-7 7-7"
+                ></path>
+              </svg>
+            </button>
+            <div class="truncate">
+              <h2
+                id="chat-title"
+                class="font-bold text-base text-slate-100 truncate"
+              >
+                Select a Peer
+              </h2>
+              <div
+                class="text-[11px] text-slate-400 font-medium flex items-center gap-2 mt-0.5"
+              >
+                <span
+                  id="chat-status-dot"
+                  class="w-2 h-2 rounded-full bg-slate-500"
+                ></span>
+                <span id="chat-status-text">Idle</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-1.5">
+            <button
+              id="btn-search-toggle"
+              class="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 min-h-11 min-w-11 flex items-center justify-center cursor-pointer transition-colors"
+              aria-label="Toggle Search"
+            >
+              <svg
+                class="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                ></path>
+              </svg>
+            </button>
+            <div class="relative">
+              <button
+                id="btn-peer-menu"
+                class="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 min-h-11 min-w-11 flex items-center justify-center cursor-pointer transition-colors"
+                aria-label="Peer Options Menu"
+              >
+                <svg
+                  class="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"
+                  ></path>
+                </svg>
+              </button>
+              <div
+                id="peer-dropdown"
+                class="hidden absolute right-0 mt-2 w-52 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl py-1 z-50 divide-y divide-slate-800/80"
+              >
+                <div class="py-1">
+                  <button
+                    id="btn-rename-contact"
+                    class="w-full text-left px-4 py-2.5 text-xs font-medium text-slate-300 hover:bg-slate-800 min-h-11 cursor-pointer"
+                  >
+                    Rename Alias
+                  </button>
+                  <button
+                    id="btn-archive-contact"
+                    class="w-full text-left px-4 py-2.5 text-xs font-medium text-slate-300 hover:bg-slate-800 min-h-11 cursor-pointer"
+                  >
+                    Archive Peer
+                  </button>
+                </div>
+                <div class="py-1">
+                  <button
+                    id="btn-reset-session"
+                    class="w-full text-left px-4 py-2.5 text-xs font-medium text-amber-400 hover:bg-slate-800 min-h-11 cursor-pointer"
+                  >
+                    Wipe Channel State
+                  </button>
+                  <button
+                    id="btn-delete-contact"
+                    class="w-full text-left px-4 py-2.5 text-xs font-medium text-red-400 hover:bg-slate-800 min-h-11 cursor-pointer"
+                  >
+                    Delete Peer & History
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <div
+          id="search-bar-container"
+          class="hidden bg-slate-900 border-b border-slate-800 p-2.5 px-4 shrink-0"
+        >
+          <input
+            type="text"
+            id="chat-search-input"
+            class="w-full bg-slate-950 border border-slate-700/80 rounded-lg text-base sm:text-sm text-slate-200 px-3.5 py-2 min-h-11 focus:outline-none focus:border-indigo-500"
+            placeholder="Search local history..."
+          />
+        </div>
+
+        <div
+          id="action-banner"
+          role="alert"
+          aria-live="assertive"
+          class="hidden bg-indigo-950/60 text-indigo-100 px-4 py-3 border-b border-indigo-800/50 flex-col sm:flex-row justify-between items-start sm:items-center gap-3 shrink-0 backdrop-blur-xs"
+        >
+          <div class="text-xs sm:text-sm flex items-center gap-2 font-medium">
+            <svg
+              class="w-4 h-4 text-indigo-400 shrink-0"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              ></path>
+            </svg>
+            <span id="action-banner-msg">Action required.</span>
+          </div>
+          <div class="flex items-center gap-3 w-full sm:w-auto">
+            <label
+              id="bundle-toggle-label"
+              class="hidden items-center gap-2 text-xs text-indigo-300 cursor-pointer min-h-11 select-none"
+            >
+              <input
+                type="checkbox"
+                id="toggle-bundle"
+                class="rounded border-indigo-700 bg-indigo-950 text-indigo-500 w-4 h-4 focus:ring-indigo-500"
+              />
+              Bundle Handshake
+            </label>
+            <button
+              id="btn-copy-packet"
+              class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-xs font-semibold w-full sm:w-auto min-h-11 cursor-pointer transition-all"
+            >
+              Copy Payload
+            </button>
+          </div>
+        </div>
+
+        <div
+          id="chat-messages"
+          class="flex-1 overflow-y-auto p-4 space-y-3.5 flex flex-col relative select-text overscroll-y-contain min-h-0 pb-6"
+        ></div>
+
+        <div
+          id="empty-state"
+          class="absolute inset-0 flex items-center justify-center bg-slate-950 flex-col px-6 text-center z-0"
+        >
+          <div
+            class="w-16 h-16 mb-5 rounded-2xl bg-slate-900 flex items-center justify-center border border-slate-800/80 shadow-inner"
+          >
+            <svg
+              class="w-8 h-8 text-slate-600"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+              ></path>
+            </svg>
+          </div>
+          <h3 class="text-base font-semibold text-slate-200 mb-1">
+            Terminal Idle
+          </h3>
+          <p class="text-xs text-slate-500 max-w-sm mb-6">
+            Select a trusted peer to begin secure post-quantum communication.
+          </p>
+        </div>
+
+        <div
+          id="chat-input-area"
+          class="p-3 bg-slate-900/90 border-t border-slate-800 hidden relative shrink-0 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+        >
+          <form id="chat-form" class="flex gap-2">
+            <input
+              type="text"
+              id="chat-input"
+              class="flex-1 bg-slate-950 border border-slate-700/80 rounded-lg px-4 py-2 text-base sm:text-sm text-slate-200 focus:outline-none focus:border-emerald-500 min-h-11 transition-colors"
+              placeholder="Type message..."
+              autocomplete="off"
+              enterkeyhint="send"
+            />
+            <button
+              type="button"
+              id="btn-read"
+              class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-4 md:px-5 py-2 rounded-lg text-xs font-semibold min-h-11 border border-slate-700/80 cursor-pointer transition-all"
+            >
+              Read
+            </button>
+            <button
+              type="submit"
+              class="bg-emerald-600 hover:bg-emerald-500 text-white px-5 md:px-6 py-2 rounded-lg text-xs font-semibold min-h-11 cursor-pointer transition-all shadow-xs"
+            >
+              Send
+            </button>
+          </form>
+        </div>
+      </main>
+    </div>
+
+    <div
+      id="toast"
+      role="status"
+      aria-live="polite"
+      class="fixed top-4 left-1/2 -translate-x-1/2 bg-slate-800 border border-slate-700 text-slate-100 px-4 py-2.5 rounded-xl shadow-2xl opacity-0 pointer-events-none z-100 text-xs font-semibold flex items-center gap-2 min-h-11 transition-all duration-300"
+    >
+      <span id="toast-msg"></span>
+    </div>
+
+    <div
+      id="modal-overlay"
+      class="fixed inset-0 bg-slate-950/80 backdrop-blur-xs z-50 hidden items-center justify-center p-4 transition-opacity"
+    >
+      <div
+        id="modal-container"
+        class="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl w-full max-w-sm max-h-[90dvh] overflow-y-auto flex flex-col"
+        onclick="event.stopPropagation()"
+      ></div>
+    </div>
+
+    <div
+      id="metadata-overlay"
+      class="fixed inset-0 bg-slate-950/80 backdrop-blur-xs z-50 hidden items-center justify-center p-4 transition-opacity"
+    >
+      <div
+        class="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl w-full max-w-md max-h-[90dvh] flex flex-col"
+        onclick="event.stopPropagation()"
+      >
+        <div
+          class="bg-slate-800/80 border-b border-slate-800 px-4 py-3 flex justify-between items-center shrink-0 rounded-t-2xl"
+        >
+          <h3
+            id="metadata-title"
+            class="text-xs font-bold uppercase tracking-widest text-slate-300"
+          >
+            Inspector
+          </h3>
+          <button
+            id="btn-close-metadata"
+            class="text-slate-400 hover:text-slate-200 p-2 -mr-2 min-h-11 min-w-11 flex justify-center items-center cursor-pointer"
+            aria-label="Close Metadata"
+          >
+            <svg
+              class="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M6 18L18 6M6 6l12 12"
+              ></path>
+            </svg>
+          </button>
+        </div>
+        <div
+          class="p-4 text-[11px] font-mono text-slate-300 space-y-2.5 leading-relaxed overflow-y-auto"
+          id="metadata-content"
+        ></div>
+      </div>
+    </div>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "@noble/ciphers/": "/vendor/@noble/ciphers/",
+          "@noble/curves/": "/vendor/@noble/curves/",
+          "@noble/hashes/": "/vendor/@noble/hashes/",
+          "@noble/post-quantum/": "/vendor/@noble/post-quantum/"
+        }
+      }
+    </script>
+    <script type="module" src="/main.js"></script>
+    <script>
+      addEventListener('load', () => {
+        navigator.serviceWorker
+          .register('/sw.js')
+          .then(console.log)
+          .catch(console.error);
+      });
+    </script>
+  </body>
+</html>

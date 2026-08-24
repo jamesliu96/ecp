@@ -1,0 +1,35 @@
+{
+  "name": "ecp",
+  "version": "1.0.0",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "tsc": "tsc",
+    "tsc:watch": "tsc --watch",
+    "tw": "npx @tailwindcss/cli -i src/main.css -o main.css",
+    "tw:watch": "npx @tailwindcss/cli -i src/main.css -o main.css --watch",
+    "vendor": "mkdir -p vendor/@noble && cp -r node_modules/@noble/{ciphers,curves,hashes,post-quantum} vendor/@noble/",
+    "generate:sw": "node generate-sw.js",
+    "serve": "serve",
+    "dev": "npm-run-all -s vendor generate:sw -p tw:watch tsc:watch serve",
+    "build": "run-p vendor generate:sw tsc"
+  },
+  "dependencies": {
+    "@noble/ciphers": "2",
+    "@noble/curves": "2",
+    "@noble/hashes": "2",
+    "@noble/post-quantum": "0",
+    "tailwind": "4"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "4",
+    "npm-check-updates": "23",
+    "npm-run-all": "4",
+    "serve": "14",
+    "typescript": "7"
+  },
+  "allowScripts": {
+    "core-js@2.6.12": true,
+    "@parcel/watcher@2.5.1": true
+  }
+}
