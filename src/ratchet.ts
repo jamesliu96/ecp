@@ -550,7 +550,7 @@ export async function DecryptMessage(packetBytes: Uint8Array) {
   session.Nr++;
   oldCKr.fill(0);
 
-  session.lastRespPacket = undefined;
+  delete session.lastRespPacket;
   await DB.put('sessions', session);
 
   return { session, plaintext: new TextDecoder().decode(ptext) };

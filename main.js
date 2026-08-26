@@ -6,7 +6,6 @@ import { calculateFingerprint, getLocalFingerprint, getLocalIdentity, serializeI
 import { CreateInit, EncryptMessage, ProcessInit, ProcessResp, DecryptMessage, } from './ratchet.js';
 const State = {
     currentContactFp: undefined,
-    activeCopyString: undefined,
     showArchived: false,
     searchQuery: '',
 };
@@ -59,38 +58,15 @@ function resetChatView(updateHash = true) {
     UI.$('chat-status-dot').className = 'w-2 h-2 rounded-full bg-slate-500';
     UI.$('chat-input-area').classList.add('hidden');
     UI.$('empty-state').classList.remove('hidden');
-    UI.$('action-banner').classList.add('hidden');
-    UI.$('action-banner').classList.remove('flex');
-    delete State.activeCopyString;
 }
-async function handleOutgoing(packetBase64, msg, bundleBase64) {
-    UI.$('action-banner-msg').textContent = msg;
-    UI.$('action-banner').classList.remove('hidden');
-    UI.$('action-banner').classList.add('flex');
-    const bundleToggle = UI.$('toggle-bundle');
-    if (bundleBase64) {
-        UI.$('bundle-toggle-label').classList.remove('hidden');
-        UI.$('bundle-toggle-label').classList.add('flex');
-        bundleToggle.onchange = () => {
-            State.activeCopyString = formatEnvelope(decodeBase64URL(bundleToggle.checked ? bundleBase64 : packetBase64));
-        };
-        bundleToggle.checked = true;
-        bundleToggle.onchange(new Event('change'));
+async function handleOutgoing(packetBase64, bundleBase64) {
+    try {
+        await navigator.clipboard.writeText(formatEnvelope(decodeBase64URL(bundleBase64 ?? packetBase64)));
+        UI.showToast(`Encrypted ${typeof bundleBase64 !== 'undefined' ? 'Bundle' : 'Packet'} Copied`);
     }
-    else {
-        UI.$('bundle-toggle-label').classList.add('hidden');
-        UI.$('bundle-toggle-label').classList.remove('flex');
-        State.activeCopyString = formatEnvelope(decodeBase64URL(packetBase64));
-        try {
-            await navigator.clipboard.writeText(State.activeCopyString);
-            UI.showToast('Encrypted packet copied to clipboard.');
-            UI.$('action-banner').classList.add('hidden');
-            UI.$('action-banner').classList.remove('flex');
-            delete State.activeCopyString;
-        }
-        catch (err) {
-            console.warn('Clipboard auto-copy failed. Manual copy required.', err);
-        }
+    catch (err) {
+        UI.showToast('Clipboard Access Denied');
+        console.error('[Clipboard] Write error:', err);
     }
 }
 async function renderSidebar() {
@@ -168,9 +144,6 @@ async function selectContact(fp, isNavigatingHistory = false) {
     }
     State.currentContactFp = fp;
     UI.$('chat-messages').replaceChildren();
-    UI.$('action-banner').classList.add('hidden');
-    UI.$('action-banner').classList.remove('flex');
-    delete State.activeCopyString;
     contact.lastReadTimestamp = Date.now();
     await DB.put('contacts', contact);
     UI.$('sidebar-view').classList.add('max-md:hidden');
@@ -279,8 +252,8 @@ UI.$('btn-copy-identity').onclick = async () => {
         UI.showToast('Identity Bundle Copied');
     }
     catch (err) {
-        UI.showToast('Clipboard access denied.');
-        console.error('Clipboard error:', err);
+        UI.showToast('Clipboard Access Denied');
+        console.error('[Clipboard] Identity copy error:', err);
     }
 };
 UI.$('btn-add-contact').onclick = async () => {
@@ -292,9 +265,9 @@ UI.$('btn-add-contact').onclick = async () => {
         const fp = await calculateFingerprint(bytes);
         const localFp = await getLocalFingerprint();
         if (fp === localFp)
-            return UI.showToast('Self-messaging prohibited: cannot link own identity.');
+            return UI.showToast('Cannot Link Own Identity');
         if (await DB.get('contacts', fp))
-            return UI.showToast('Peer already exists');
+            return UI.showToast('Peer Already Exists');
         UI.showModal(`
       <div class="p-4 bg-slate-900 border-b border-slate-800"><h3 class="font-bold text-slate-200">Link New Peer</h3></div>
       <div class="p-4">
@@ -322,18 +295,18 @@ UI.$('btn-add-contact').onclick = async () => {
                     lastReadTimestamp: Date.now(),
                 });
                 UI.closeModal();
-                UI.showToast('Peer Linked.');
+                UI.showToast('Peer Linked');
                 await renderSidebar();
             }
             catch (err) {
-                UI.showToast('Save failed.');
-                console.error('Save error:', err);
+                UI.showToast('Failed to Save Peer');
+                console.error('[Storage] Save peer error:', err);
             }
         };
     }
     catch (err) {
-        UI.showToast('Clipboard does not contain a valid Identity.');
-        console.error('Clipboard error:', err);
+        UI.showToast('Invalid Identity in Clipboard');
+        console.error('[Clipboard] Parse identity error:', err);
     }
 };
 let isSending = false;
@@ -359,7 +332,7 @@ UI.$('chat-form').onsubmit = async (e) => {
                 text,
                 timestamp: Date.now(),
             });
-            await handleOutgoing(encodeBase64URL(packet), 'Transmit INIT handshake to peer.');
+            await handleOutgoing(encodeBase64URL(packet));
         }
         else {
             const packet = await EncryptMessage(session, text);
@@ -373,34 +346,20 @@ UI.$('chat-form').onsubmit = async (e) => {
             let bundleBase64;
             if (session.lastRespPacket)
                 bundleBase64 = encodeBase64URL(concatBytes(decodeBase64URL(session.lastRespPacket), packet));
-            await handleOutgoing(encodeBase64URL(packet), 'Copy encrypted MSG to clipboard.', bundleBase64);
+            await handleOutgoing(encodeBase64URL(packet), bundleBase64);
         }
         input.value = '';
         await renderChatLog();
     }
     catch (err) {
-        UI.showToast(`Crypto error: ${err instanceof Error && err.message ? err.message : String(err)}`);
-        console.error('Crypto error:', err);
+        const msg = err instanceof Error && err.message ? err.message : String(err);
+        UI.showToast(`Crypto Error: ${msg}`);
+        console.error('[Crypto] Outgoing processing error:', err);
     }
     finally {
         isSending = false;
         input.disabled = false;
         input.focus();
-    }
-};
-UI.$('btn-copy-packet').onclick = async () => {
-    if (State.activeCopyString) {
-        try {
-            await navigator.clipboard.writeText(State.activeCopyString);
-            UI.showToast('Payload copied to clipboard.');
-            UI.$('action-banner').classList.add('hidden');
-            UI.$('action-banner').classList.remove('flex');
-            delete State.activeCopyString;
-        }
-        catch (err) {
-            UI.showToast('Clipboard copy failed.');
-            console.error('Clipboard copy failed.', err);
-        }
     }
 };
 UI.$('btn-toggle-archived').onclick = () => {
@@ -464,8 +423,8 @@ UI.$('btn-rename-contact').onclick = async () => {
             await renderSidebar();
         }
         catch (err) {
-            UI.showToast('Failed to save name.');
-            console.error('Save name error:', err);
+            UI.showToast('Failed to Save Alias');
+            console.error('[Storage] Rename contact error:', err);
         }
     };
 };
@@ -486,8 +445,8 @@ UI.$('btn-archive-contact').onclick = async () => {
         await renderSidebar();
     }
     catch (err) {
-        UI.showToast('Failed to archive peer.');
-        console.error('Archive error:', err);
+        UI.showToast('Failed to Update Peer');
+        console.error('[Storage] Archive contact error:', err);
     }
 };
 UI.$('btn-delete-contact').onclick = async () => {
@@ -516,12 +475,12 @@ UI.$('btn-delete-contact').onclick = async () => {
                 await DB.deleteConversation(session.conversationID);
             UI.closeModal();
             resetChatView(true);
-            UI.showToast('Peer and history purged.');
+            UI.showToast('Peer Deleted');
             await renderSidebar();
         }
         catch (err) {
-            UI.showToast('Failed to delete peer.');
-            console.error('Delete error:', err);
+            UI.showToast('Failed to Delete Peer');
+            console.error('[Storage] Delete contact error:', err);
         }
     };
 };
@@ -548,11 +507,11 @@ UI.$('btn-reset-session').onclick = async () => {
             await DB.deleteConversation(session.conversationID);
             UI.closeModal();
             await renderChatLog();
-            UI.showToast('Channel State Wiped.');
+            UI.showToast('Channel State Wiped');
         }
         catch (err) {
-            UI.showToast('Failed to wipe session.');
-            console.error('Wipe session error:', err);
+            UI.showToast('Failed to Wipe Channel');
+            console.error('[Storage] Wipe session error:', err);
         }
     };
 };
@@ -571,23 +530,29 @@ UI.$('btn-global-settings').onclick = () => {
     </div>
   `);
     UI.$('btn-save-cfg').onclick = () => {
-        Settings.set({
-            persistHandshakes: UI.$('cfg-persist').checked,
-        });
-        UI.closeModal();
-        UI.showToast('Settings Saved');
+        try {
+            Settings.set({
+                persistHandshakes: UI.$('cfg-persist').checked,
+            });
+            UI.closeModal();
+            UI.showToast('Settings Saved');
+        }
+        catch (err) {
+            UI.showToast('Failed to Save Settings');
+            console.warn('[Storage] Failed to save settings:', err);
+        }
     };
 };
 async function processClipboardText(rawText) {
     const text = rawText.trim();
     if (!text.startsWith(Config.PREFIX))
-        return UI.showToast('Not a valid ECP envelope');
+        return UI.showToast('Invalid Envelope Format');
     if (text.length > Config.MAX_PACKET_SIZE)
-        return UI.showToast('Warning: Packet exceeds safety size limits.');
+        return UI.showToast('Packet Exceeds Size Limit');
     try {
         const bytes = parseEnvelope(text);
         if (bytes[0] === Config.IDENTITY_VERSION && bytes.length > 1000)
-            return UI.showToast("Detected Identity. Use 'Link New Peer'.");
+            return UI.showToast("Identity Bundle Detected (Use 'Link New Peer')");
         let offset = 0;
         let sessionChanged = false;
         while (offset < bytes.length) {
@@ -609,8 +574,8 @@ async function processClipboardText(rawText) {
                     text: plaintext,
                     timestamp: Date.now(),
                 });
-                UI.showToast('INIT processed securely.');
-                await handleOutgoing(encodeBase64URL(respPacket), 'Auto-generated RESP packet ready.');
+                UI.showToast('Handshake INIT Processed');
+                await handleOutgoing(encodeBase64URL(respPacket));
                 if (State.currentContactFp !== session.contactFp)
                     await selectContact(session.contactFp);
                 sessionChanged = true;
@@ -618,7 +583,7 @@ async function processClipboardText(rawText) {
             else if (type === Config.PACKET_TYPES.RESP) {
                 const { alreadyEstablished, session } = await ProcessResp(pktBytes);
                 if (alreadyEstablished)
-                    console.warn('Skipping redundant RESP inside bundled payload.');
+                    console.warn('[Ratchet] Skipping redundant RESP packet in bundle.');
                 else {
                     UI.showToast('Channel Established');
                     sessionChanged = true;
@@ -635,7 +600,7 @@ async function processClipboardText(rawText) {
                     text: plaintext,
                     timestamp: Date.now(),
                 });
-                UI.showToast('Message decrypted.');
+                UI.showToast('Message Decrypted');
                 sessionChanged = true;
             }
             offset += pktLen;
@@ -646,8 +611,9 @@ async function processClipboardText(rawText) {
         }
     }
     catch (err) {
-        UI.showToast(`Dropped invalid packet: ${err instanceof Error && err.message ? err.message : String(err)}`);
-        console.error('Dropped invalid packet:', err);
+        const msg = err instanceof Error && err.message ? err.message : String(err);
+        UI.showToast(`Packet Dropped: ${msg}`);
+        console.error('[Ratchet] Incoming packet error:', err);
     }
 }
 UI.$('btn-read').onclick = UI.$('btn-read-clipboard').onclick = async () => {
@@ -655,9 +621,9 @@ UI.$('btn-read').onclick = UI.$('btn-read-clipboard').onclick = async () => {
         const text = await navigator.clipboard.readText();
         await processClipboardText(text);
     }
-    catch (e) {
-        UI.showToast('Failed to read clipboard.');
-        console.error('Failed to read clipboard.', e);
+    catch (err) {
+        UI.showToast('Failed to Read Clipboard');
+        console.error('[Clipboard] Read error:', err);
     }
 };
 document.addEventListener('paste', async (e) => {
@@ -747,11 +713,11 @@ addEventListener('load', async () => {
         await getLocalIdentity();
         await renderSidebar();
         await handleRoute();
-        console.info('Ready.');
+        console.info('[App] Initialization complete.');
     }
     catch (err) {
-        UI.showToast('Boot Failure.');
-        console.error('Boot Failure.', err);
+        UI.showToast('Initialization Failed');
+        console.error('[App] Boot failure:', err);
     }
 });
 //# sourceMappingURL=main.js.map

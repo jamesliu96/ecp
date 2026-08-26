@@ -295,7 +295,7 @@ export async function DecryptMessage(packetBytes) {
     session.CKr = CK_next;
     session.Nr++;
     oldCKr.fill(0);
-    session.lastRespPacket = undefined;
+    delete session.lastRespPacket;
     await DB.put('sessions', session);
     return { session, plaintext: new TextDecoder().decode(ptext) };
 }

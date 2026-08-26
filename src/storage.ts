@@ -13,11 +13,7 @@ export const Settings = (() => {
       }
     },
     set: (settings: AppSettings) => {
-      try {
-        localStorage.setItem('ecp_settings', JSON.stringify(settings));
-      } catch (e) {
-        console.warn('Failed to save settings:', e);
-      }
+      localStorage.setItem('ecp_settings', JSON.stringify(settings));
     },
   };
 })();
