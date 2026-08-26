@@ -68,8 +68,12 @@ const escapeHtml = (str: string): string =>
 
 const closePeerDropdown = () => UI.$('peer-dropdown').classList.add('hidden');
 
-function resetChatView() {
+function resetChatView(updateHash = true) {
   delete State.currentContactFp;
+
+  if (updateHash && location.hash)
+    history.replaceState(null, '', location.pathname + location.search);
+
   UI.$('chat-view').classList.add('hidden');
   UI.$('chat-view').classList.remove('flex');
   UI.$('sidebar-view').classList.remove('max-md:hidden');
@@ -199,15 +203,25 @@ async function renderSidebar() {
   UI.$('contacts-list').replaceChildren(frag);
 }
 
-async function selectContact(fp: string) {
+async function selectContact(fp: string, isNavigatingHistory = false) {
+  const contact = await DB.get<PeerContact>('contacts', fp);
+  if (!contact) {
+    resetChatView(true);
+    return;
+  }
+
+  if (!isNavigatingHistory) {
+    const targetHash = `#${fp}`;
+    if (location.hash !== targetHash)
+      if (State.currentContactFp) history.replaceState(null, '', targetHash);
+      else history.pushState(null, '', targetHash);
+  }
+
   State.currentContactFp = fp;
   UI.$('chat-messages').replaceChildren();
   UI.$('action-banner').classList.add('hidden');
   UI.$('action-banner').classList.remove('flex');
   delete State.activeCopyString;
-
-  const contact = await DB.get<PeerContact>('contacts', fp);
-  if (!contact) return;
 
   contact.lastReadTimestamp = Date.now();
   await DB.put('contacts', contact);
@@ -323,7 +337,7 @@ async function renderChatLog() {
 }
 
 UI.$('btn-back-mobile').onclick = () => {
-  resetChatView();
+  resetChatView(true);
   renderSidebar();
 };
 
@@ -598,7 +612,7 @@ UI.$('btn-delete-contact').onclick = async () => {
       await DB.delete('sessions', targetFp);
       if (session) await DB.deleteConversation(session.conversationID);
       UI.closeModal();
-      resetChatView();
+      resetChatView(true);
       UI.showToast('Peer and history purged.');
       await renderSidebar();
     } catch (err) {
@@ -831,10 +845,27 @@ UI.$('btn-close-metadata').onclick = () => {
   UI.$('metadata-overlay').classList.remove('flex');
 };
 
+async function handleRoute() {
+  const hash = location.hash.replace(/^#/, '').trim();
+
+  if (!hash) {
+    resetChatView(false);
+    await renderSidebar();
+    return;
+  }
+
+  if (hash === State.currentContactFp) return;
+
+  await selectContact(hash, true);
+}
+
+addEventListener('hashchange', handleRoute);
+
 addEventListener('load', async () => {
   try {
     await getLocalIdentity();
     await renderSidebar();
+    await handleRoute();
     console.info('Ready.');
   } catch (err) {
     UI.showToast('Boot Failure.');
