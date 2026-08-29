@@ -2,14 +2,14 @@ import { readdirSync, statSync, writeFileSync } from 'fs';
 import { join, basename, extname } from 'path';
 
 /** @param {string} dir */
-function walk(dir, base = '') {
+function walkVendor(dir, base = '') {
   /** @type {string[]} */
   let results = [];
   for (const name of readdirSync(dir)) {
     const full = join(dir, name);
     const stat = statSync(full);
     if (stat.isDirectory())
-      results = results.concat(walk(full, base + name + '/'));
+      results = results.concat(walkVendor(full, base + name + '/'));
     else if (name.endsWith('.js')) results.push(`/vendor/${base}${name}`);
   }
   return results;
@@ -44,7 +44,7 @@ const staticAssets = [
 
 const srcJsAssets = walkSrcTs('src');
 
-const vendorAssets = walk('vendor/@noble', '@noble/');
+const vendorAssets = walkVendor('vendor/@noble', '@noble/');
 
 const allAssets = [...staticAssets, ...srcJsAssets, ...vendorAssets];
 
