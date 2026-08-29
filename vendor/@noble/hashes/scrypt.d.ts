@@ -6,7 +6,8 @@ import { type KDFInput, type TArg, type TRet } from './utils.ts';
  * - `p` is parallelization factor (1 is common)
  * - `dkLen` is output key length in bytes e.g. 32, and must be `>= 1` per RFC 7914 §2.
  * - `asyncTick` - (default: 10) max time in ms for which async function can block execution
- * - `maxmem` - (default: `1024 ** 3 + 1024` aka 1GB+1KB). A limit that the app could use for scrypt
+ * - `maxmem` - (default: `1024 ** 3 + 2 * 1024` aka 1GiB+2KiB). A limit that the app
+ *   could use for scrypt
  * - `onProgress` - callback function that would be executed for progress report
  */
 export type ScryptOpts = {

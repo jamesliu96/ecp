@@ -5,12 +5,25 @@
  * We use WebCrypto aka globalThis.crypto, which exists in browsers and node.js 16+.
  * @module
  */
-import { abytes, anumber } from "./utils.js";
+import { abytes, anumber, clean, copyBytes, } from "./utils.js";
 function getWebcryptoSubtle() {
     const cr = typeof globalThis !== 'undefined' && globalThis.crypto;
     if (cr && typeof cr.subtle === 'object' && cr.subtle != null)
         return cr.subtle;
     throw new Error('crypto.subtle must be defined');
+}
+const BUFFER_SOURCE_PARAMS = ['iv', 'counter', 'additionalData'];
+function snapshotCryptParams(cryptParams) {
+    const params = { ...cryptParams };
+    const buffers = [];
+    for (const name of BUFFER_SOURCE_PARAMS) {
+        if (params[name] === undefined)
+            continue;
+        const snapshot = copyBytes(params[name]);
+        params[name] = snapshot;
+        buffers.push(snapshot);
+    }
+    return { params, buffers };
 }
 /**
  * Internal webcrypto utils. Can be overridden if crypto.subtle is not present,
@@ -21,18 +34,38 @@ function getWebcryptoSubtle() {
 export const utils = {
     async encrypt(key, keyParams, cryptParams, plaintext) {
         const cr = getWebcryptoSubtle();
-        // Non-extractable: the ephemeral CryptoKey is only used for this operation,
-        // so there is no reason to allow exportKey() on it.
-        const iKey = await cr.importKey('raw', key, keyParams, false, ['encrypt']);
-        const ciphertext = await cr.encrypt(cryptParams, iKey, plaintext);
-        return new Uint8Array(ciphertext);
+        // Snapshot the small operation state before the first await. Otherwise key import leaves a
+        // window where callers can accidentally collapse several operations onto a reused nonce.
+        const opKey = copyBytes(key);
+        let buffers = [];
+        try {
+            const snapshot = snapshotCryptParams(cryptParams);
+            buffers = snapshot.buffers;
+            // Non-extractable: the ephemeral CryptoKey is only used for this operation,
+            // so there is no reason to allow exportKey() on it.
+            const iKey = await cr.importKey('raw', opKey, keyParams, false, ['encrypt']);
+            const ciphertext = await cr.encrypt(snapshot.params, iKey, plaintext);
+            return new Uint8Array(ciphertext);
+        }
+        finally {
+            clean(opKey, ...buffers);
+        }
     },
     async decrypt(key, keyParams, cryptParams, ciphertext) {
         const cr = getWebcryptoSubtle();
-        // Non-extractable, same as encrypt() above.
-        const iKey = await cr.importKey('raw', key, keyParams, false, ['decrypt']);
-        const plaintext = await cr.decrypt(cryptParams, iKey, ciphertext);
-        return new Uint8Array(plaintext);
+        const opKey = copyBytes(key);
+        let buffers = [];
+        try {
+            const snapshot = snapshotCryptParams(cryptParams);
+            buffers = snapshot.buffers;
+            // Non-extractable, same as encrypt() above.
+            const iKey = await cr.importKey('raw', opKey, keyParams, false, ['decrypt']);
+            const plaintext = await cr.decrypt(snapshot.params, iKey, ciphertext);
+            return new Uint8Array(plaintext);
+        }
+        finally {
+            clean(opKey, ...buffers);
+        }
     },
 };
 const mode = {

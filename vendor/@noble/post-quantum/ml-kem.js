@@ -296,8 +296,11 @@ const genKPKE = (opts_) => {
             for (let i = 0; i < K; i++)
                 polyAdd(tmp, MultiplyNTTs(sk[i], crystals.NTT.encode(u[i])));
             polySub(v, crystals.NTT.decode(tmp)); // w = v' - tmp
-            cleanBytes(tmp, sk, u);
-            return poly1.encode(v);
+            // `v` now holds w, from which the plaintext is just a 1-bit threshold away, so wipe it too.
+            // encode() allocates its own buffer, so the returned bytes do not alias `v`.
+            const res = poly1.encode(v);
+            cleanBytes(tmp, sk, u, v);
+            return res;
         },
     };
 };
@@ -305,6 +308,11 @@ const genKPKE = (opts_) => {
  * Public ML-KEM wrapper over the internal K-PKE subroutine.
  * `keygen(seed)` and `encapsulate(publicKey, msg)` are deterministic/test-oriented hooks that map
  * more directly to Algorithms 16-17 than to the pure no-input / random-internal Algorithms 19-20.
+ * `encapsulate`'s optional `msg` is the 32-byte message randomness `m` of Algorithm 17, the
+ * pre-image the shared secret is derived from, NOT a plaintext to encrypt: ML-KEM is a key
+ * encapsulation mechanism, not a cipher. Omit it to draw fresh randomness; pass it only to
+ * reproduce a known-answer vector, and only as 32 uniformly random bytes, since a low-entropy or
+ * reused value makes the shared secret predictable. The same holds for `keygen`'s optional `seed`.
  * decapsulate() tries to follow the Algorithms 18/21 implicit-reject structure as closely as
  * practical here by re-encrypting, comparing ciphertexts, returning `Khat` on match or `Kbar` on
  * mismatch, and zeroizing the non-returned shared-secret candidate; JS/JIT still provides no
@@ -340,34 +348,65 @@ function createKyber(opts) {
     return Object.freeze({
         info: Object.freeze({ type: 'ml-kem' }),
         lengths: kemLengths,
-        keygen: (seed = randomBytes(seedLen)) => {
-            abytes(seed, seedLen, 'seed');
-            const { publicKey, secretKey: sk } = KPKE.keygen(seed.subarray(0, 32));
-            const publicKeyHash = HASH256(publicKey);
-            // (dkPKE||ek||H(ek)||z)
-            const secretKey = secretCoder.encode([sk, publicKey, publicKeyHash, seed.subarray(32)]);
-            cleanBytes(sk, publicKeyHash);
-            return {
-                publicKey: publicKey,
-                secretKey: secretKey,
-            };
+        keygen: (seed) => {
+            // A generated seed carries z (the implicit-rejection secret) and must be wiped once the
+            // secret key holds a copy, matching ml-dsa / slh-dsa / falcon keygen. A caller-supplied
+            // seed is the caller's to manage (and the immutability test requires it stay untouched).
+            const ownSeed = seed === undefined;
+            const s = ownSeed ? randomBytes(seedLen) : seed;
+            let sk;
+            let publicKeyHash;
+            try {
+                abytes(s, seedLen, 'seed');
+                const keys = KPKE.keygen(s.subarray(0, 32));
+                const publicKey = keys.publicKey;
+                sk = keys.secretKey;
+                publicKeyHash = HASH256(publicKey);
+                // (dkPKE||ek||H(ek)||z)
+                const secretKey = secretCoder.encode([sk, publicKey, publicKeyHash, s.subarray(32)]);
+                return {
+                    publicKey: publicKey,
+                    secretKey: secretKey,
+                };
+            }
+            finally {
+                if (sk !== undefined)
+                    cleanBytes(sk);
+                if (publicKeyHash !== undefined)
+                    cleanBytes(publicKeyHash);
+                if (ownSeed)
+                    cleanBytes(s);
+            }
         },
         getPublicKey: (secretKey) => {
             const [_sk, publicKey, _publicKeyHash, _z] = secretCoder.decode(secretKey);
             return Uint8Array.from(publicKey);
         },
-        encapsulate: (publicKey, msg = randomBytes(msgLen)) => {
-            abytes(publicKey, lengths.publicKey, 'publicKey');
-            abytes(msg, msgLen, 'message');
-            validateModulus(publicKey, 'encapsulate');
-            // derive randomness
-            const kr = HASH512.create().update(msg).update(HASH256(publicKey)).digest();
-            const cipherText = KPKE.encrypt(publicKey, msg, kr.subarray(32, 64));
-            cleanBytes(kr.subarray(32));
-            return {
-                cipherText: cipherText,
-                sharedSecret: kr.subarray(0, 32),
-            };
+        encapsulate: (publicKey, msg) => {
+            // A generated message is the preimage of the shared secret (K = G(m || H(ek))[0:32]) and
+            // must be wiped. A caller-supplied message is the deterministic-randomness hook and the
+            // caller's to manage (the immutability test requires it stay untouched).
+            const ownMsg = msg === undefined;
+            const m = ownMsg ? randomBytes(msgLen) : msg;
+            let kr;
+            try {
+                abytes(publicKey, lengths.publicKey, 'publicKey');
+                abytes(m, msgLen, 'message');
+                validateModulus(publicKey, 'encapsulate');
+                // derive randomness
+                kr = HASH512.create().update(m).update(HASH256(publicKey)).digest();
+                const cipherText = KPKE.encrypt(publicKey, m, kr.subarray(32, 64));
+                return {
+                    cipherText: cipherText,
+                    sharedSecret: kr.subarray(0, 32),
+                };
+            }
+            finally {
+                if (kr !== undefined)
+                    cleanBytes(kr.subarray(32));
+                if (ownMsg)
+                    cleanBytes(m);
+            }
         },
         decapsulate: (cipherText, secretKey) => {
             abytes(secretKey, secretCoder.bytesLen, 'secretKey'); // 768*k + 96
@@ -406,15 +445,27 @@ function createKyber(opts) {
             const cached = KPKE.prepare(ek);
             return Object.freeze({
                 publicKey: ek,
-                encapsulate: (msg = randomBytes(msgLen)) => {
-                    abytes(msg, msgLen, 'message');
-                    const kr = HASH512.create().update(msg).update(publicKeyHash).digest();
-                    const cipherText = cached.encrypt(msg, kr.subarray(32, 64));
-                    cleanBytes(kr.subarray(32));
-                    return {
-                        cipherText: cipherText,
-                        sharedSecret: kr.subarray(0, 32),
-                    };
+                encapsulate: (msg) => {
+                    // As in the non-prepared encapsulate: a generated message is the shared-secret
+                    // preimage and is wiped; a caller-supplied one is left untouched.
+                    const ownMsg = msg === undefined;
+                    const m = ownMsg ? randomBytes(msgLen) : msg;
+                    let kr;
+                    try {
+                        abytes(m, msgLen, 'message');
+                        kr = HASH512.create().update(m).update(publicKeyHash).digest();
+                        const cipherText = cached.encrypt(m, kr.subarray(32, 64));
+                        return {
+                            cipherText: cipherText,
+                            sharedSecret: kr.subarray(0, 32),
+                        };
+                    }
+                    finally {
+                        if (kr !== undefined)
+                            cleanBytes(kr.subarray(32));
+                        if (ownMsg)
+                            cleanBytes(m);
+                    }
                 },
                 decapsulate: (cipherText, secretKey) => {
                     abytes(secretKey, secretCoder.bytesLen, 'secretKey');

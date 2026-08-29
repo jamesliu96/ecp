@@ -12,7 +12,7 @@ import { bytesToNumberLE, numberToHexUnpadded } from '@noble/curves/utils.js';
 import { shake256 } from '@noble/hashes/sha3.js';
 import { abytes, bytesToHex, createView, hexToBytes, randomBytes, swap32IfBE, u32, u8, } from '@noble/hashes/utils.js';
 import { genCrystals } from "./_crystals.js";
-import { baswap64If, cleanBytes, getMask, splitCoder, validateSigOpts, validateVerOpts, } from "./utils.js";
+import { baswap64If, cleanBytes, copyBytes, getMask, splitCoder, validateSigOpts, validateVerOpts, SIG_OPT_KEYS, } from "./utils.js";
 /*
 FIPS-206 would likely improve the situation with spec.
 
@@ -230,8 +230,13 @@ const compCoder = (n) => {
                 const sign = readBits(1);
                 const low = readBits(7);
                 let high = 0;
-                for (; !readBits(1); high++)
-                    ;
+                // Reference comp_decode adds 128 for each unary zero and rejects immediately above 2047.
+                // Waiting for the terminating one first lets an invalid coefficient scan the entire input.
+                while (!readBits(1)) {
+                    high++;
+                    if (high > LIMIT >>> 7)
+                        throw new Error(`limit: ${low | (high << 7)} > ${LIMIT}`);
+                }
                 const v = low | (high << 7);
                 if (sign && v === 0)
                     throw new Error('negative zero encoding');
@@ -510,6 +515,9 @@ const SIGMA_MIN = /* @__PURE__ */ Object.freeze([
     f64b(BigInt('4608433670533905013')),
     f64b(BigInt('4608525754002622308')),
 ]);
+// Upper end of the SamplerZ proof interval from Falcon section 3.9.1. The per-leaf sigma is
+// derived from the reconstructed private basis, so imported keys must be checked against it.
+const SIGMA_MAX = 1.8205;
 // Falcon Table 3.1 RCDT values for chi, split into 24-bit limbs; storage is [high, mid, low],
 // so gaussian0() intentionally compares them against v0, v1, v2 in reverse order. The final
 // RCDT[18] = 0 row is omitted because the algorithm iterates only over i = 0..17.
@@ -1111,6 +1119,51 @@ function getFloatPoly(logn) {
         },
     };
 }
+function ldlFFT(logn, g00t, g01t, g11t) {
+    // Algorithm 8: LDL*(G)
+    // (Page 37)
+    // Require: A full-rank self-adjoint matrix G = (Gᵢⱼ) ∈ FFT(Q[x]/(φ))²ˣ²
+    // Ensure: The LDL* decomposition G = LDL* over FFT(Q[x]/(φ))
+    // Format: All polynomials are in FFT representation.
+    // 1: D₀₀ ← G₀₀
+    // 2: L₁₀ ← G₁₀/G₀₀
+    // 3: D₁₁ ← G₁₁ - L₁₀ ⊙ L₁₀* ⊙ G₀₀
+    // 4: L ← [ 1 0 ; L₁₀ 1 ], D ← [ D₀₀ 0 ; 0 D₁₁ ]
+    // 5: return (L, D)
+    // Algorithm 9: ffLDL*(G)
+    // (Page 37)
+    // Require: A full-rank Gram matrix G ∈ FFT(Q[x]/(xⁿ + 1))²ˣ²
+    // Ensure: A binary tree T
+    // Format: All polynomials are in FFT representation.
+    // 1: (L, D) ← LDL*(G) ▷ L = [ 1 0 ; L₁₀ 1 ], D = [ D₀₀ 0 ; 0 D₁₁ ]
+    // 2: T.value ← L₁₀
+    // 3: if (n = 2) then
+    // 4:     T.leftchild ← D₀₀
+    // 5:     T.rightchild ← D₁₁
+    // 6:     return T
+    // 7: else
+    // 8:     d₀₀, d₀₁ ← splitfft(D₀₀) ▷ dᵢⱼ ∈ FFT(Q[x]/(x^{n/2} + 1))
+    // 9:     d₁₀, d₁₁ ← splitfft(D₁₁)
+    // 10:     G₀ ← [ d₀₀ d₀₁ ; d₀₁* d₀₀ ], G₁ ← [ d₁₀ d₁₁ ; d₁₁* d₁₀ ]
+    //         ▷ Since D₀₀, D₁₁ are self-adjoint, (3.30) applies
+    // 11:     T.leftchild ← ffLDL*(G₀) ▷ Recursive calls
+    // 12:     T.rightchild ← ffLDL*(G₁)
+    // 13:     return T
+    // Recursive calls may alias g00t and g11t, and the top-level arrays persist across signing
+    // retries. LDL replaces array entries, so shallow copies keep both kinds of caller state intact.
+    g00t = g00t.slice();
+    g01t = g01t.slice();
+    g11t = g11t.slice();
+    const hn = 1 << (logn - 1);
+    for (let i = 0; i < hn; i++) {
+        const g01 = g01t[i];
+        const g11 = g11t[i];
+        const mu = fComplex.scale(g01, 1.0 / g00t[i].re);
+        g11t[i] = { re: g11.re - (mu.re * g01.re + mu.im * g01.im), im: g11.im };
+        g01t[i] = fComplex.conj(mu);
+    }
+    return { g00: g00t, g01: g01t, g11: g11t };
+}
 function ApproxExp(x, ccs) {
     // Algorithm 13: ApproxExp(x, ccs), (Page 42)
     // Require: Floating-point values x ∈ [0, ln(2)] and ccs ∈ [0, 1]
@@ -1633,19 +1686,24 @@ function genFalcon(opts) {
     };
     // [ 1B header ] [ 40B nonce ] [ compressed_sig ]
     const SignatureCoderDetached = (logn) => {
-        const sigLen = opts.padded ? opts.sigLen - 1 - NONCELEN : opts.detachedLen;
-        const getSigLen = (s2) => (opts.padded ? sigLen : s2.length);
+        const paddedSigLen = opts.sigLen - 1 - NONCELEN;
+        const getSigLen = (s2) => (opts.padded ? paddedSigLen : s2.length);
         return {
             encode({ nonce, s2 }) {
-                return headerCoder(0x30 + logn, splitCoder('falcon.detachedSignature', NONCELEN, getSigLen(s2))).encode([nonce, opts.padded ? pad(sigLen).encode(s2) : s2]);
+                return headerCoder(0x30 + logn, splitCoder('falcon.detachedSignature', NONCELEN, getSigLen(s2))).encode([nonce, opts.padded ? pad(paddedSigLen).encode(s2) : s2]);
             },
             decode(data) {
+                // Unpadded Round-3 signatures have parameter-set maxima (header + nonce + s2):
+                // 752 bytes for Falcon-512 and 1462 for Falcon-1024. Reject before creating views or
+                // entering the bit decoder so attacker-sized inputs cannot cause proportional work.
+                if (!opts.padded && data.length > 1 + NONCELEN + opts.maxS2Len)
+                    throw new Error('detached signature too long');
                 // Padded detached signatures are fixed-length (`lengths.signature`), so the payload width
                 // must come from the parameter set, not from the input: deriving it would accept appended
                 // zero bytes and truncated padding as extra valid encodings of the same signature.
                 // Unpadded signatures are variable-length; decodeUnpaddedSig() enforces the exact canonical
                 // bitlength of whatever remains.
-                const payloadLen = opts.padded ? sigLen : data.length - NONCELEN - 1;
+                const payloadLen = opts.padded ? paddedSigLen : data.length - NONCELEN - 1;
                 const [nonce, raw] = headerCoder(0x30 + logn, splitCoder('falcon.detachedSignature', NONCELEN, payloadLen)).decode(data);
                 const s2 = decodeSig(raw);
                 return { nonce, s2 };
@@ -1899,47 +1957,6 @@ function genFalcon(opts) {
                     return s + z;
             }
         }
-        ldlFFT(logn, g00t, g01t, g11t) {
-            // Algorithm 8: LDL*(G)
-            // (Page 37)
-            // Require: A full-rank self-adjoint matrix G = (Gᵢⱼ) ∈ FFT(Q[x]/(φ))²ˣ²
-            // Ensure: The LDL* decomposition G = LDL* over FFT(Q[x]/(φ))
-            // Format: All polynomials are in FFT representation.
-            // 1: D₀₀ ← G₀₀
-            // 2: L₁₀ ← G₁₀/G₀₀
-            // 3: D₁₁ ← G₁₁ - L₁₀ ⊙ L₁₀* ⊙ G₀₀
-            // 4: L ← [ 1 0 ; L₁₀ 1 ], D ← [ D₀₀ 0 ; 0 D₁₁ ]
-            // 5: return (L, D)
-            // Algorithm 9: ffLDL*(G)
-            // (Page 37)
-            // Require: A full-rank Gram matrix G ∈ FFT(Q[x]/(xⁿ + 1))²ˣ²
-            // Ensure: A binary tree T
-            // Format: All polynomials are in FFT representation.
-            // 1: (L, D) ← LDL*(G) ▷ L = [ 1 0 ; L₁₀ 1 ], D = [ D₀₀ 0 ; 0 D₁₁ ]
-            // 2: T.value ← L₁₀
-            // 3: if (n = 2) then
-            // 4:     T.leftchild ← D₀₀
-            // 5:     T.rightchild ← D₁₁
-            // 6:     return T
-            // 7: else
-            // 8:     d₀₀, d₀₁ ← splitfft(D₀₀) ▷ dᵢⱼ ∈ FFT(Q[x]/(x^{n/2} + 1))
-            // 9:     d₁₀, d₁₁ ← splitfft(D₁₁)
-            // 10:     G₀ ← [ d₀₀ d₀₁ ; d₀₁* d₀₀ ], G₁ ← [ d₁₀ d₁₁ ; d₁₁* d₁₀ ]
-            //         ▷ Since D₀₀, D₁₁ are self-adjoint, (3.30) applies
-            // 11:     T.leftchild ← ffLDL*(G₀) ▷ Recursive calls
-            // 12:     T.rightchild ← ffLDL*(G₁)
-            // 13:     return T
-            g00t = g00t.slice(); // can be same as g11t and everything will break!
-            const hn = 1 << (logn - 1);
-            for (let i = 0; i < hn; i++) {
-                const g01 = g01t[i];
-                const g11 = g11t[i];
-                const mu = fComplex.scale(g01, 1.0 / g00t[i].re);
-                g11t[i] = { re: g11.re - (mu.re * g01.re + mu.im * g01.im), im: g11.im };
-                g01t[i] = fComplex.conj(mu);
-            }
-            return { g00: g00t, g01: g01t, g11: g11t };
-        }
         splitFFT(logn, f) {
             // Algorithm 1: splitfft(FFT(f))
             // (Page 29)
@@ -2045,7 +2062,13 @@ function genFalcon(opts) {
             // 13: z₀ ← mergefft(z'₀)
             // 14: return z = (z₀, z₁)
             if (logn === 0) {
+                // The dynamic sampler stores 1/σ' instead of σ'. Keygen guarantees this interval,
+                // but an imported compact key may reconstruct an invalid basis. Check the actual LDL*
+                // leaf before it can drive SamplerZ; the negated comparison also rejects NaN/infinity.
                 const leaf = Math.sqrt(g00i[0].re) * INV_SIGMA[this.logn];
+                const sigmaPrime = 1 / leaf;
+                if (!(sigmaPrime >= SIGMA_MIN[this.logn] && sigmaPrime <= SIGMA_MAX))
+                    throw new Error('invalid secretKey: sampler sigma out of range');
                 // 3:     z₀ ← SamplerZ(t₀, σ')
                 //        ▷ Since n=1, tᵢ = invFFT(tᵢ) ∈ Q and zᵢ = invFFT(zᵢ) ∈ Z
                 const t0re = this.samplerZ(t0[0].re, leaf);
@@ -2053,7 +2076,7 @@ function genFalcon(opts) {
                 return { t0: [{ re: t0re, im: 0.0 }], t1: [{ re: t1re, im: 0.0 }] };
             }
             // 6: (l, T₀, T₁) ← (T.value, T.leftchild, T.rightchild)
-            const { g00, g01, g11 } = this.ldlFFT(logn, g00i, g01i, g11i);
+            const { g00, g01, g11 } = ldlFFT(logn, g00i, g01i, g11i);
             const { f0: g00f0, f1: g00f1 } = this.splitSelfAdjFFT(logn, g00);
             const { f0: g11f0, f1: g11f1 } = this.splitSelfAdjFFT(logn, g11);
             // 7: t'₁ ← splitfft(t₁)
@@ -2203,10 +2226,15 @@ function genFalcon(opts) {
         publicKey: publicKeyCoder.bytesLen,
         secretKey: secretKeyCoder.bytesLen,
     });
+    // Falcon takes a sampler callback the other schemes do not, and rejects `context`
+    // with its own message; both stay in the accepted set so the specific errors fire.
+    const FALCON_SIG_OPT_KEYS = [...SIG_OPT_KEYS, 'random'];
     // Noble exposes a 48-byte sampler-seed hook,
     // but Falcon still samples/encodes a separate 40-byte nonce per signature.
     const getRnd = (opts = {}) => {
-        validateSigOpts(opts);
+        // `context` stays in the accepted set so the specific "not supported" error below
+        // still fires, rather than the generic unexpected-option one.
+        opts = validateSigOpts(opts, FALCON_SIG_OPT_KEYS);
         if (opts.context !== undefined)
             throw new Error('context is not supported');
         if (opts.random !== undefined && typeof opts.random !== 'function')
@@ -2221,8 +2249,8 @@ function genFalcon(opts) {
         return (len = 0) => drbg.randomBytes(len);
     };
     const checkVerOpts = (opts = {}) => {
-        validateVerOpts(opts);
-        if (opts.context !== undefined)
+        const normalized = validateVerOpts(opts);
+        if (normalized.context !== undefined)
             throw new Error('context is not supported');
     };
     const tests = Object.freeze({
@@ -2296,12 +2324,43 @@ function genFalcon(opts) {
         },
         open(sig, pk, verOpts = {}) {
             checkVerOpts(verOpts);
-            const { s2, nonce, msg } = SignatureCoder.decode(sig);
-            // Zero-copy API: returned message aliases the caller-provided signature buffer.
-            // Copy it if ownership is needed.
-            if (verifyRaw(pk, s2, nonce, msg))
-                return msg;
-            throw new Error('invalid signature');
+            // Wrong argument types are caller bugs and must stay TypeErrors; only what happens
+            // after this is untrusted input. Detached verify() type-checks the public key the same
+            // way, so open() does too: a wrong type is fatal, and a malformed (wrong-length or
+            // non-canonical) key folds into the single rejection below rather than leaking a raw
+            // codec error, exactly as detached verify() folds it into `false`.
+            abytes(sig, undefined, 'signature');
+            abytes(pk, undefined, 'publicKey');
+            // Decode and verify owned snapshots. Apart from keeping the authenticated result stable
+            // after open() returns, this ensures every verification step observes the same bytes when
+            // an input is backed by SharedArrayBuffer or has subclass-overridden view methods.
+            const ownedSig = copyBytes(sig);
+            const ownedPk = copyBytes(pk);
+            // Decode failures and malformed-key failures are rejected signatures, not internal
+            // faults. Letting the codec's own errors out gave a caller handling untrusted input
+            // several different messages for one corrupt byte, including "end of buffer: len=2
+            // buf=0 lastByte=undefined", which reads as a library bug. Detached verify already
+            // treats every such failure uniformly; open() collapses them into one Error (the
+            // original preserved as `cause`). A well-formed signature that simply does not
+            // validate falls through to the same message with no cause.
+            try {
+                let verifiedMsg;
+                try {
+                    const { s2, nonce, msg } = SignatureCoder.decode(ownedSig);
+                    if (verifyRaw(ownedPk, s2, nonce, msg))
+                        verifiedMsg = msg;
+                }
+                catch (cause) {
+                    throw new Error('invalid signature', { cause });
+                }
+                if (verifiedMsg === undefined)
+                    throw new Error('invalid signature');
+                // Do not retain or expose the full attached-signature allocation through `.buffer`.
+                return copyBytes(verifiedMsg);
+            }
+            finally {
+                cleanBytes(ownedSig, ownedPk);
+            }
         },
     });
     const res = {
@@ -2318,14 +2377,14 @@ function genFalcon(opts) {
 }
 const falcon512opts = {
     N: 512,
+    // Keep the mode an own property: omitted config fields must not inherit from Object.prototype.
+    padded: false,
     // Table 3.3 fixed padded detached bytes, including the detached header byte and 40-byte nonce.
     sigLen: 666,
     fgBits: 6,
     FGBits: 8,
     // Compressed-s payload bytes only, excluding the detached header byte and 40-byte nonce.
     paddedLen: 625,
-    // Payload-only budget: genFalcon() adds the detached header byte and 40-byte nonce around it.
-    detachedLen: 690,
 };
 /**
  * Falcon-512 detached-signature API with the attached helper exposed as `.attached`.
@@ -2357,14 +2416,13 @@ export const falcon512padded = /* @__PURE__ */ (() => genFalcon({
 }))();
 const falcon1024opts = {
     N: 1024,
+    padded: false,
     // Table 3.3 fixed padded detached bytes, including the detached header byte and 40-byte nonce.
     sigLen: 1280,
     fgBits: 5,
     FGBits: 8,
     // Compressed-s payload bytes only, excluding the detached header byte and 40-byte nonce.
     paddedLen: 1239,
-    // Payload-only budget: genFalcon() adds the detached header byte and 40-byte nonce around it.
-    detachedLen: 1280,
 };
 /**
  * Falcon-1024 detached-signature API with the attached helper exposed as `.attached`.
@@ -2405,6 +2463,7 @@ export const __tests = /* @__PURE__ */ (() => Object.freeze({
     INV_SIGMA,
     SIGMA_MIN,
     getFloatPoly,
+    ldlFFT,
     cleanCPoly,
     falcon512: falcon512.__test,
     falcon512padded: falcon512padded.__test,

@@ -302,22 +302,25 @@ export declare function bytesToHex(bytes: TArg<Uint8Array>): string;
  */
 export declare function hexToBytes(hex: string): TRet<Uint8Array>;
 /**
- * There is no setImmediate in browser and setTimeout is slow.
- * This yields to the Promise/microtask scheduler queue, not to timers or the
- * full macrotask event loop.
+ * Yields to the host task scheduler so timers, I/O, and rendering can make progress.
+ * Uses the Web Scheduling API when available or `setTimeout` as a cross-platform fallback.
+ * Host-task yields are much slower than microtasks (roughly 1ms with the timer fallback), so
+ * async loops should use `asyncTick >= 10` to amortize scheduling overhead to about 10% while
+ * still allowing other event-loop work to proceed.
+ * @param onReject - optional cleanup invoked only if the host yield fails
  * @example
  * Yield to the next scheduler tick.
  * ```ts
  * await nextTick();
  * ```
  */
-export declare const nextTick: () => Promise<void>;
+export declare function nextTick(onReject?: () => void): Promise<void>;
 /**
- * Returns control to the Promise/microtask scheduler every `tick`
- * milliseconds to avoid blocking long loops.
+ * Returns control to the host event loop every `tick` milliseconds to avoid blocking long loops.
  * @param iters - number of loop iterations to run
  * @param tick - maximum time slice in milliseconds
  * @param cb - callback executed on each iteration
+ * @param onReject - optional cleanup invoked only if a host yield fails
  * @throws On wrong argument types. {@link TypeError}
  * @throws On wrong argument ranges or values. {@link RangeError}
  * @example
@@ -326,7 +329,7 @@ export declare const nextTick: () => Promise<void>;
  * await asyncLoop(2, 0, () => {});
  * ```
  */
-export declare function asyncLoop(iters: number, tick: number, cb: (i: number) => void): Promise<void>;
+export declare function asyncLoop(iters: number, tick: number, cb: (i: number) => void, onReject?: () => void): Promise<void>;
 /**
  * Converts string to bytes using UTF8 encoding.
  * Built-in doesn't validate input to be string: we do the check.
@@ -391,7 +394,7 @@ export declare const validateObject: (object: Record<string, any>, fields?: Reco
  * @param defaults - base option object
  * @param opts - user overrides
  * @param title - label included in thrown override errors
- * @returns Merged option object. The merge mutates `defaults` in place.
+ * @returns Fresh merged option object with a null prototype.
  * @throws On wrong argument types. {@link TypeError}
  * @example
  * Merge user overrides onto default options.
@@ -448,9 +451,10 @@ export interface Hash<T> {
 export interface PRG {
     /**
      * Mixes fresh entropy into the current generator state.
-     * @param seed - Entropy bytes to absorb.
+     * @param seed - Non-empty entropy bytes to absorb. When omitted, the implementation uses its
+     * system RNG.
      */
-    addEntropy(seed: TArg<Uint8Array>): void;
+    addEntropy(seed?: TArg<Uint8Array>): void;
     /**
      * Produces a requested number of pseudorandom bytes.
      * @param bytesLength - Number of bytes to generate.

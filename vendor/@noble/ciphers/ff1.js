@@ -22,13 +22,64 @@ function NUMradix(radix, data) {
         res = res * BigInt(radix) + BigInt(i);
     return res;
 }
+function bigintBits(n) {
+    return n.toString(2).length;
+}
+// Keep an outward-rounded interval while discarding low bits. This bounds large powers without
+// asking runtimes to materialize them (Bun, for example, has a lower maximum BigInt size).
+function trimInterval({ min, max, shift }, precision) {
+    const drop = Math.max(0, bigintBits(max) - precision);
+    if (!drop)
+        return { min, max, shift };
+    const bits = BigInt(drop);
+    const mask = (BigInt(1) << bits) - BigInt(1);
+    return { min: min >> bits, max: (max + mask) >> bits, shift: shift + drop };
+}
+function mulInterval(a, b, precision) {
+    return trimInterval({ min: a.min * b.min, max: a.max * b.max, shift: a.shift + b.shift }, precision);
+}
+function powInterval(radix, exp, precision) {
+    let res = { min: BigInt(1), max: BigInt(1), shift: 0 };
+    let base = { min: BigInt(radix), max: BigInt(radix), shift: 0 };
+    while (exp) {
+        if (exp % 2)
+            res = mulInterval(res, base, precision);
+        exp = Math.floor(exp / 2);
+        if (exp)
+            base = mulInterval(base, base, precision);
+    }
+    return res;
+}
+// ceil(ceil(v * log2(radix)) / 8), calculated with exact integer bounds as required by the
+// current SP 800-38G revision. radix**v - 1 is the largest value encoded in `b` bytes.
+function getFF1RadixBytes(radix, v) {
+    if (!v)
+        return 0;
+    // radix**v is a power of two only when radix is, and subtracting one then changes its bit size.
+    if ((radix & (radix - 1)) === 0) {
+        const bits = bigintBits(BigInt(radix)) - 1;
+        return Math.ceil((bits * v) / 8);
+    }
+    for (let precision = 64;; precision *= 2) {
+        const { min, max, shift } = powInterval(radix, v, precision);
+        const minBytes = Math.ceil((bigintBits(min) + shift) / 8);
+        const maxBytes = Math.ceil((bigintBits(max) + shift) / 8);
+        if (minBytes === maxBytes)
+            return minBytes;
+    }
+}
+// Test-only hook for sizing edge cases that would require million-digit FF1 inputs.
+export const __TESTS = /* @__PURE__ */ Object.freeze({ getFF1RadixBytes });
 function getRound(radix, key, tweak, x) {
     // This implementation writes [radix]3 as 0x00 || uint16_be(radix), so radix=2^16
     // needs a real 24-bit encoder before it can be supported.
-    if (radix > 2 ** 16 - 1)
+    if (radix < 2 || radix > 2 ** 16 - 1)
         throw new Error('invalid radix ' + radix);
     // minLen must satisfy both radix**minlen ≥ 100 and minlen ≥ 2.
-    const minLen = Math.max(2, Math.ceil(Math.log(100) / Math.log(radix)));
+    let minLen = 0;
+    for (let domain = BigInt(1); domain < BigInt(100); domain *= BigInt(radix))
+        minLen++;
+    minLen = Math.max(2, minLen);
     const maxLen = 2 ** 32 - 1;
     // 2 ≤ minlen ≤ maxlen < 2**32
     if (2 > minLen || minLen > maxLen || maxLen >= 2 ** 32)
@@ -45,7 +96,7 @@ function getRound(radix, key, tweak, x) {
     }
     const u = Math.floor(x.length / 2);
     const v = x.length - u;
-    const b = Math.ceil(Math.ceil(v * Math.log2(radix)) / 8);
+    const b = getFF1RadixBytes(radix, v);
     const d = 4 * Math.ceil(b / 4) + 4;
     const padding = mod(-tweak.length - b - 1, 16);
     // P = [1]1 || [2]1 || [1]1 || [radix]3 || [10]1 || [u mod 256]1 || [n]4 || [t]4.

@@ -1,5 +1,5 @@
 import type { CHash } from '@noble/hashes/utils.js';
-import { type CryptoKeys, type Signer, type SigOpts, type TArg, type TRet, type VerOpts } from './utils.ts';
+import { type CryptoKeys, type Signer, type SigOpts, type TArg, type TRet } from './utils.ts';
 /** Internal ML-DSA options. */
 export type DSAInternalOpts = {
     /**
@@ -12,8 +12,8 @@ export type DSAInternalOpts = {
 /** ML-DSA signer surface with access to the internal message formatting mode. */
 export type DSAInternal = CryptoKeys & {
     lengths: Signer['lengths'];
-    sign: (msg: TArg<Uint8Array>, secretKey: TArg<Uint8Array>, opts?: TArg<SigOpts & DSAInternalOpts>) => TRet<Uint8Array>;
-    verify: (sig: TArg<Uint8Array>, msg: TArg<Uint8Array>, pubKey: TArg<Uint8Array>, opts?: TArg<VerOpts & DSAInternalOpts>) => boolean;
+    sign: (msg: TArg<Uint8Array>, secretKey: TArg<Uint8Array>, opts?: TArg<Omit<SigOpts, 'context'> & DSAInternalOpts>) => TRet<Uint8Array>;
+    verify: (sig: TArg<Uint8Array>, msg: TArg<Uint8Array>, pubKey: TArg<Uint8Array>, opts?: TArg<DSAInternalOpts>) => boolean;
 };
 /** Public ML-DSA signer surface. */
 export type DSA = Signer & {

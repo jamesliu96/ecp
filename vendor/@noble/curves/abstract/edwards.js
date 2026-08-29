@@ -586,7 +586,8 @@ export function eddsa(Point, cHash, eddsaOpts = {}) {
     /** Signs message with secret key. RFC8032 5.1.6 */
     function sign(msg, secretKey, options = {}) {
         validateObject(options, {}, {}, 'options');
-        msg = abytes(msg, undefined, 'message');
+        // Snapshot once: nonce and challenge must use the same invocation-time message bytes.
+        msg = copyBytes(abytes(msg, undefined, 'message'));
         if (prehash)
             msg = prehash(msg); // for ed25519ph etc.
         const { prefix, scalar, pointBytes } = getExtendedPublicKey(secretKey);

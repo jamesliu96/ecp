@@ -13,7 +13,7 @@ import { createFROST, } from "./abstract/frost.js";
 import { createHasher, isogenyMap, mapToCurveSimpleSWU, } from "./abstract/hash-to-curve.js";
 import { Field, mapHashToField, pow2 } from "./abstract/modular.js";
 import { ecdsa, weierstrass, } from "./abstract/weierstrass.js";
-import { abytes, asciiToBytes, bytesToNumberBE, concatBytes, } from "./utils.js";
+import { abytes, asciiToBytes, bytesToNumberBE, concatBytes, copyBytes, } from "./utils.js";
 // Seems like generator was produced from some seed:
 // `Pointk1.BASE.multiply(Pointk1.Fn.inv(2n, N)).toAffine().x`
 // // gives short x 0x3b78ce563f89a0ed9414f5aa28ad0d96d6795f9c63n
@@ -153,7 +153,8 @@ function schnorrGetPublicKey(secretKey) {
  */
 function schnorrSign(message, secretKey, auxRand = randomBytes(32)) {
     const { Fn, BASE } = Pointk1;
-    const m = abytes(message, undefined, 'message');
+    // Snapshot once: nonce, challenge, and self-verification must use one transcript.
+    const m = copyBytes(abytes(message, undefined, 'message'));
     const { bytes: px, scalar: d } = schnorrGetExtPubKey(secretKey); // checks for isWithinCurveOrder
     const a = abytes(auxRand, 32, 'auxRand'); // Auxiliary random data a: a 32-byte array
     // Let t be the byte-wise xor of bytes(d) and hash/aux(a).

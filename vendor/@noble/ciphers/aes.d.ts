@@ -249,6 +249,7 @@ declare class _AesCtrDRBG implements PRG {
     private nonce;
     private state;
     private reseedCnt;
+    private destroyed;
     constructor(keyLen: number, seed: TArg<Uint8Array>, personalization?: TArg<Uint8Array>);
     private update;
     addEntropy(seed: TArg<Uint8Array>, info?: TArg<Uint8Array>): void;

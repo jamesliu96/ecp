@@ -52,6 +52,8 @@ export type DKG_Secret = {
     signers: Signers;
     /** Cached round2 packages from the first successful round2 call. */
     round2Cache?: Record<Identifier, DKG_Round2>;
+    /** Canonical authenticated round1 transcript from the first successful round2 call. */
+    round1Cache?: DKG_Round1[];
     /** Current DKG state-machine step. */
     step?: 1 | 2 | 3;
 };
@@ -160,13 +162,13 @@ export type FrostOpts<P extends FROSTPoint<P>> = {
     /** Optional scalar-field override. */
     readonly Fn?: IField<bigint>;
     /**
-     * Optional suite hook that tightens canonical decoding with subgroup / identity checks.
+     * Optional suite hook that adds checks after mandatory identity and subgroup validation.
      * @param p - Point to validate.
      */
     readonly validatePoint?: (p: P) => void;
     /**
-     * Optional public-key parser. Implementations MUST preserve the same subgroup / identity policy
-     * as `validatePoint`, because this bypasses generic canonical decoding in `parsePoint()`.
+     * Optional public-key parser. Its result is still subjected to the mandatory checks and
+     * `validatePoint`; this hook only replaces byte decoding.
      * @param bytes - Encoded public key.
      * @returns Parsed public point.
      */
@@ -320,8 +322,8 @@ export type FROST = {
          * @param round1 - Public round1 broadcasts from all participants.
          * @param round2 - Round2 messages received from others.
          * @returns Final secret/public key information for the participant.
-         * Callers MUST pass the same verified remote `round1` package set that was already
-         * accepted in `round2()`, rather than re-fetching or rebuilding it from the network.
+         * `round1` must byte-compare equal to the remote packages authenticated in `round2()`.
+         * Finalization consumes the stored authenticated transcript, not caller-owned arrays.
          */
         round3: (secret: TArg<DKG_Secret>, round1: TArg<DKG_Round1[]>, round2: TArg<DKG_Round2[]>) => TRet<Key>;
         /**

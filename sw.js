@@ -83,6 +83,7 @@ const CACHE = [
   '/vendor/@noble/post-quantum/ml-kem.js',
   '/vendor/@noble/post-quantum/slh-dsa.js',
   '/vendor/@noble/post-quantum/utils.js',
+  '/vendor/@noble/post-quantum/webcrypto.js',
 ];
 
 self.addEventListener('install', (event) => {

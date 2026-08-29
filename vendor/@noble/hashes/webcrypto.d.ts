@@ -82,8 +82,7 @@ export declare const hmac: TRet<WebHmacFn>;
  * @param length - length of output keying material in bytes.
  *   RFC 5869 §2.3 allows `0..255*HashLen`, so `0` requests an empty OKM.
  * @returns Promise resolving to derived key bytes.
- * The RFC `L <= 255 * HashLen` bound is currently enforced only by backend
- * `deriveBits()` rejection, not by an explicit library-side guard.
+ * The RFC `L <= 255 * HashLen` bound is enforced before calling WebCrypto.
  * @throws If the current runtime does not provide `crypto.subtle`. {@link Error}
  * @example
  * WebCrypto HKDF (RFC 5869): derive keys from an initial input.
@@ -109,7 +108,7 @@ export declare function hkdf(hash: TArg<WebHash>, ikm: TArg<Uint8Array>, salt: T
  * @returns Promise resolving to derived key bytes.
  * Positive-iteration enforcement is currently delegated to backend
  * `deriveBits()` rejection (for example `c = 0`), not a dedicated
- * library-side guard.
+ * library-side guard. Values above the signed 32-bit backend range are rejected locally.
  * @throws If the current runtime does not provide `crypto.subtle`. {@link Error}
  * @example
  * WebCrypto PBKDF2-HMAC: RFC 2898 key derivation function.

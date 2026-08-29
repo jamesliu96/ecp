@@ -94,13 +94,14 @@ function BlockMix(input, ii, out, oi, r) {
         XorAndSalsa(out, head, input, (ii += 16), out, tail);
     }
 }
+// 128*r*(N+p+1) for N=2**20, r=8, p=1: 1 GiB main table plus 2 KiB workspace.
+const SCRYPT_DEFAULT_MAXMEM = 128 * 8 * (2 ** 20 + 1 + 1);
 // Common prologue and epilogue for sync/async functions
 function scryptInit(password, salt, _opts) {
-    // Maxmem - 1GB+1KB by default
     const opts = checkOpts({
         dkLen: 32,
         asyncTick: 10,
-        maxmem: 1024 ** 3 + 1024,
+        maxmem: SCRYPT_DEFAULT_MAXMEM,
     }, _opts);
     const { N, r, p, dkLen, asyncTick, maxmem, onProgress } = opts;
     anumber(N, 'N');
@@ -269,6 +270,8 @@ export function scrypt(password, salt, opts) {
  */
 export async function scryptAsync(password, salt, opts) {
     const { N, r, p, dkLen, blockSize32, V, B32, B, tmp, blockMixCb, asyncTick } = scryptInit(password, salt, opts);
+    // One failure handler covers both yield boundaries without putting the hot loops in a try block.
+    const abort = () => clean(B, V, tmp);
     swap32IfBE(B32);
     for (let pi = 0; pi < p; pi++) {
         const Pi = blockSize32 * pi;
@@ -278,7 +281,7 @@ export async function scryptAsync(password, salt, opts) {
         await asyncLoop(N - 1, asyncTick, () => {
             BlockMix(V, pos, V, (pos += blockSize32), r); // V[i] = BlockMix(V[i-1]);
             blockMixCb();
-        });
+        }, abort);
         BlockMix(V, (N - 1) * blockSize32, B32, Pi, r); // Process last element
         blockMixCb();
         await asyncLoop(N, asyncTick, () => {
@@ -294,7 +297,7 @@ export async function scryptAsync(password, salt, opts) {
                 tmp[k] = B32[Pi + k] ^ V[j * blockSize32 + k];
             BlockMix(tmp, 0, B32, Pi, r); // B = BlockMix(B ^ V[j])
             blockMixCb();
-        });
+        }, abort);
     }
     swap32IfBE(B32);
     return scryptOutput(password, dkLen, B, V, tmp);

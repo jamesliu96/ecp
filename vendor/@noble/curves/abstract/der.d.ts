@@ -63,9 +63,10 @@ export type IDER = {
     /**
      * Parse a DER signature into `{ r, s }`.
      * @param bytes - DER signature bytes.
+     * @param maxScalarBytes - Optional maximum encoded byte length of each INTEGER.
      * @returns Parsed signature components.
      */
-    toSig(bytes: TArg<Uint8Array>): {
+    toSig(bytes: TArg<Uint8Array>, maxScalarBytes?: number): {
         r: bigint;
         s: bigint;
     };

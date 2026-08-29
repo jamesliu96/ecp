@@ -134,6 +134,16 @@ const aobject = (value, label) => {
     if (value === null || typeof value !== 'object' || Array.isArray(value))
         throw new TypeError((label === 'object' ? '' : `"${label}" `) + 'expected object, got type=' + typeof value);
 };
+const aopts = (value, label) => {
+    aobject(value, label);
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null)
+        throw new TypeError(`"${label}" expected plain object`);
+    // Object.assign() treats an own "__proto__" source key as a write to the target's legacy
+    // prototype setter. Reject it before merging so inherited option values cannot be injected.
+    if (Object.hasOwn(value, '__proto__'))
+        throw new TypeError(`"${label}.__proto__" is not allowed`);
+};
 /**
  * Asserts a hash instance has not been destroyed or finished.
  * @param instance - hash instance to validate
@@ -407,22 +417,35 @@ export function hexToBytes(hex) {
     return array;
 }
 /**
- * There is no setImmediate in browser and setTimeout is slow.
- * This yields to the Promise/microtask scheduler queue, not to timers or the
- * full macrotask event loop.
+ * Yields to the host task scheduler so timers, I/O, and rendering can make progress.
+ * Uses the Web Scheduling API when available or `setTimeout` as a cross-platform fallback.
+ * Host-task yields are much slower than microtasks (roughly 1ms with the timer fallback), so
+ * async loops should use `asyncTick >= 10` to amortize scheduling overhead to about 10% while
+ * still allowing other event-loop work to proceed.
+ * @param onReject - optional cleanup invoked only if the host yield fails
  * @example
  * Yield to the next scheduler tick.
  * ```ts
  * await nextTick();
  * ```
  */
-export const nextTick = async () => { };
+export function nextTick(onReject) {
+    const host = globalThis;
+    if (typeof host.scheduler?.yield === 'function') {
+        const promise = host.scheduler.yield();
+        // Keep the original scheduler rejection; this handler exists only for cleanup.
+        if (onReject)
+            promise.catch(onReject);
+        return promise;
+    }
+    return new Promise((resolve) => host.setTimeout(resolve, 0));
+}
 /**
- * Returns control to the Promise/microtask scheduler every `tick`
- * milliseconds to avoid blocking long loops.
+ * Returns control to the host event loop every `tick` milliseconds to avoid blocking long loops.
  * @param iters - number of loop iterations to run
  * @param tick - maximum time slice in milliseconds
  * @param cb - callback executed on each iteration
+ * @param onReject - optional cleanup invoked only if a host yield fails
  * @throws On wrong argument types. {@link TypeError}
  * @throws On wrong argument ranges or values. {@link RangeError}
  * @example
@@ -431,7 +454,7 @@ export const nextTick = async () => { };
  * await asyncLoop(2, 0, () => {});
  * ```
  */
-export async function asyncLoop(iters, tick, cb) {
+export async function asyncLoop(iters, tick, cb, onReject) {
     anumber(iters, 'iters');
     anumber(tick, 'tick');
     if (typeof cb !== 'function')
@@ -444,9 +467,9 @@ export async function asyncLoop(iters, tick, cb) {
         const diff = Date.now() - ts;
         if (diff >= 0 && diff < tick)
             continue;
-        await nextTick();
+        await nextTick(onReject);
         // Track only synchronous work time; scheduler delay after yielding is outside our budget.
-        ts += diff;
+        ts = Date.now();
     }
 }
 /**
@@ -465,7 +488,15 @@ export async function asyncLoop(iters, tick, cb) {
 export function utf8ToBytes(str) {
     if (typeof str !== 'string')
         throw new TypeError('string expected');
-    return new Uint8Array(new TextEncoder().encode(str)); // https://bugzil.la/1681809
+    const encoded = new TextEncoder().encode(str);
+    try {
+        // Copy into the current realm for Firefox extension contexts. Callers that own the returned
+        // buffer can then wipe it independently of TextEncoder's temporary result.
+        return new Uint8Array(encoded); // https://bugzil.la/1681809
+    }
+    finally {
+        clean(encoded);
+    }
 }
 /**
  * Helper for KDFs: consumes Uint8Array or string.
@@ -556,7 +587,7 @@ export const validateObject = (object, fields = {}, optFields = {}, title = 'obj
  * @param defaults - base option object
  * @param opts - user overrides
  * @param title - label included in thrown override errors
- * @returns Merged option object. The merge mutates `defaults` in place.
+ * @returns Fresh merged option object with a null prototype.
  * @throws On wrong argument types. {@link TypeError}
  * @example
  * Merge user overrides onto default options.
@@ -565,10 +596,12 @@ export const validateObject = (object, fields = {}, optFields = {}, title = 'obj
  * ```
  */
 export function checkOpts(defaults, opts, title = 'opts') {
-    aobject(defaults, 'defaults');
+    aopts(defaults, 'defaults');
     if (opts !== undefined)
-        aobject(opts, title);
-    const merged = Object.assign(defaults, opts);
+        aopts(opts, title);
+    // Callers read optional fields directly, so omitted values must not fall through to ambient
+    // Object.prototype pollution (for example a forged `dkLen` changing SHAKE's default output).
+    const merged = Object.assign(Object.create(null), defaults, opts);
     return merged;
 }
 /**

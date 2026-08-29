@@ -96,6 +96,9 @@ function BlockMix(
   }
 }
 
+// 128*r*(N+p+1) for N=2**20, r=8, p=1: 1 GiB main table plus 2 KiB workspace.
+const SCRYPT_DEFAULT_MAXMEM = 128 * 8 * (2 ** 20 + 1 + 1);
+
 /**
  * Scrypt options:
  * - `N` is cpu/mem work factor (power of 2 e.g. `2**18`)
@@ -103,7 +106,8 @@ function BlockMix(
  * - `p` is parallelization factor (1 is common)
  * - `dkLen` is output key length in bytes e.g. 32, and must be `>= 1` per RFC 7914 §2.
  * - `asyncTick` - (default: 10) max time in ms for which async function can block execution
- * - `maxmem` - (default: `1024 ** 3 + 1024` aka 1GB+1KB). A limit that the app could use for scrypt
+ * - `maxmem` - (default: `1024 ** 3 + 2 * 1024` aka 1GiB+2KiB). A limit that the app
+ *   could use for scrypt
  * - `onProgress` - callback function that would be executed for progress report
  */
 export type ScryptOpts = {
@@ -130,12 +134,11 @@ export type ScryptOpts = {
 
 // Common prologue and epilogue for sync/async functions
 function scryptInit(password: TArg<KDFInput>, salt: TArg<KDFInput>, _opts?: ScryptOpts) {
-  // Maxmem - 1GB+1KB by default
   const opts = checkOpts(
     {
       dkLen: 32,
       asyncTick: 10,
-      maxmem: 1024 ** 3 + 1024,
+      maxmem: SCRYPT_DEFAULT_MAXMEM,
     },
     _opts
   );
@@ -330,30 +333,42 @@ export async function scryptAsync(
     salt,
     opts
   );
+  // One failure handler covers both yield boundaries without putting the hot loops in a try block.
+  const abort = () => clean(B, V, tmp);
   swap32IfBE(B32);
   for (let pi = 0; pi < p; pi++) {
     const Pi = blockSize32 * pi;
     for (let i = 0; i < blockSize32; i++) V[i] = B32[Pi + i]; // V[0] = B[i]
     let pos = 0;
-    await asyncLoop(N - 1, asyncTick, () => {
-      BlockMix(V, pos, V, (pos += blockSize32), r); // V[i] = BlockMix(V[i-1]);
-      blockMixCb();
-    });
+    await asyncLoop(
+      N - 1,
+      asyncTick,
+      () => {
+        BlockMix(V, pos, V, (pos += blockSize32), r); // V[i] = BlockMix(V[i-1]);
+        blockMixCb();
+      },
+      abort
+    );
     BlockMix(V, (N - 1) * blockSize32, B32, Pi, r); // Process last element
     blockMixCb();
-    await asyncLoop(N, asyncTick, () => {
-      // First u32 of the last 64-byte block (u32 is LE)
-      // RFC 7914 Integerify(X) uses the whole last 64-byte block, but mod N
-      // only depends on the low word here because N is a power of two and
-      // this implementation caps N at 2^32.
-      // & (N - 1) is % N as N is a power of 2, N & (N - 1) = 0 is checked
-      // above; >>> 0 for unsigned, input fits in u32.
-      const j = (B32[Pi + blockSize32 - 16] & (N - 1)) >>> 0; // j = Integrify(X) % iterations
-      // tmp = B ^ V[j]
-      for (let k = 0; k < blockSize32; k++) tmp[k] = B32[Pi + k] ^ V[j * blockSize32 + k];
-      BlockMix(tmp, 0, B32, Pi, r); // B = BlockMix(B ^ V[j])
-      blockMixCb();
-    });
+    await asyncLoop(
+      N,
+      asyncTick,
+      () => {
+        // First u32 of the last 64-byte block (u32 is LE)
+        // RFC 7914 Integerify(X) uses the whole last 64-byte block, but mod N
+        // only depends on the low word here because N is a power of two and
+        // this implementation caps N at 2^32.
+        // & (N - 1) is % N as N is a power of 2, N & (N - 1) = 0 is checked
+        // above; >>> 0 for unsigned, input fits in u32.
+        const j = (B32[Pi + blockSize32 - 16] & (N - 1)) >>> 0; // j = Integrify(X) % iterations
+        // tmp = B ^ V[j]
+        for (let k = 0; k < blockSize32; k++) tmp[k] = B32[Pi + k] ^ V[j * blockSize32 + k];
+        BlockMix(tmp, 0, B32, Pi, r); // B = BlockMix(B ^ V[j])
+        blockMixCb();
+      },
+      abort
+    );
   }
   swap32IfBE(B32);
   return scryptOutput(password, dkLen, B, V, tmp);

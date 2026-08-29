@@ -107,6 +107,7 @@ export declare class _XorStreamPRG implements PRG {
     private pos;
     private ctr;
     private cipher;
+    private destroyed;
     constructor(cipher: TArg<XorStream>, blockLen: number, keyLen: number, nonceLen: number, seed: TArg<Uint8Array>);
     private reseed;
     addEntropy(seed: TArg<Uint8Array>): void;

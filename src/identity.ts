@@ -14,9 +14,9 @@ export const getLocalIdentity = async () => {
   let id = await DB.get<Identity>('identity', 'local');
 
   if (!id) {
-    const dsaKP = keygenMLDSA87();
-    const dhKP = keygenX25519();
-    const pqKP = keygenMLKEM1024();
+    const dsaKP = await keygenMLDSA87();
+    const dhKP = await keygenX25519();
+    const pqKP = await keygenMLKEM1024();
 
     id = {
       id: 'local',
@@ -45,9 +45,9 @@ export const parseIdentityPublic = (bytes: Uint8Array) => {
   if (bytes[0] !== Config.IDENTITY_VERSION)
     throw new Error('Unsupported identity version');
   return {
-    signPk: bytes.slice(1, 2593),
+    dsaPk: bytes.slice(1, 2593),
     dhPk: bytes.slice(2593, 2625),
-    pqPk: bytes.slice(2625, 2625 + 1568),
+    kemPk: bytes.slice(2625, 2625 + 1568),
   };
 };
 
@@ -57,9 +57,9 @@ export const calculateFingerprint = async (identityBytes: Uint8Array) => {
     await sha256(
       concatBytes(
         new TextEncoder().encode('ECP-ID-v1'),
-        idPub.signPk,
+        idPub.dsaPk,
         idPub.dhPk,
-        idPub.pqPk,
+        idPub.kemPk,
       ),
     ),
   );

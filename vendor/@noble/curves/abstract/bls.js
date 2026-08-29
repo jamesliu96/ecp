@@ -316,7 +316,9 @@ function createBlsSig(blsPairing, PubPoint, SigPoint, isSigG1, hashToSigCurve, S
             toHex: notImplemented,
         };
     }
-    const sigCoder = SignatureCoder;
+    // Internal decoding must use the same owned callback snapshot exposed on `.Signature`.
+    // Retaining the caller's coder object would allow verification policy to change later.
+    const sigCoder = Object.freeze({ ...SignatureCoder });
     function normPub(point) {
         return point instanceof PubPoint ? point : PubPoint.fromBytes(point);
     }
@@ -446,7 +448,7 @@ function createBlsSig(blsPairing, PubPoint, SigPoint, isSigG1, hashToSigCurve, S
             return hashToSigCurve(messageBytes, opts);
         },
         Signature: Object.freeze({ ...sigCoder }),
-    }) /*satisfies Signer */;
+    }); /*satisfies Signer */
 }
 // NOTE: separate function instead of function override, so we don't depend on hasher in bn254.
 /**

@@ -3,7 +3,7 @@
  * @module
  */
 /*! noble-post-quantum - MIT License (c) 2024 Paul Miller (paulmillr.com) */
-import { abytes, abytes as abytes_, ahash as ahash_, anumber, concatBytes, isBytes, isLE, randomBytes as randb, } from '@noble/hashes/utils.js';
+import { abytes, abytes as abytes_, ahash as ahash_, anumber, bytesToHex, concatBytes, isBytes, isLE, randomBytes as randb, } from '@noble/hashes/utils.js';
 /**
  * Asserts that a value is a byte array and optionally checks its length.
  * Returns the original reference unchanged on success, and currently also accepts Node `Buffer`
@@ -92,9 +92,10 @@ export function equalBytes(a, b) {
  * ```
  */
 export function copyBytes(bytes) {
-    // `Uint8Array.from(...)` would also accept arrays / other typed arrays. Keep this helper strict
-    // because callers use it at byte-validation boundaries before mutating the detached copy.
-    return Uint8Array.from(abytes(bytes));
+    // The typed-array constructor copies a typed-array source through its internal byte storage.
+    // Unlike `Uint8Array.from`, it does not invoke a subclass-overridden iterator. Keep the explicit
+    // validation because the constructor itself would also accept arrays and other typed arrays.
+    return new Uint8Array(abytes(bytes));
 }
 /**
  * Byte-swaps each 64-bit lane in place.
@@ -156,40 +157,107 @@ export function validateOpts(opts) {
     if (isBytes(opts))
         throw new TypeError('"opts" expected object, got Uint8Array');
     aobject(opts, 'opts');
+    const proto = Object.getPrototypeOf(opts);
+    // Options are security parameters, not general class instances. Restricting the bag to own
+    // properties prevents values injected through Object.prototype (or a custom shared prototype)
+    // from silently changing signing behavior. Null-prototype records remain supported.
+    if (proto !== null && proto !== Object.prototype)
+        throw new TypeError('"opts" expected a plain object');
+}
+// Frozen because they are exported: an unfrozen array export lets anything in the
+// process push a key onto the accepted set and silently re-open exactly the hole this
+// validation closes.
+/** Keys accepted by `verify`. */
+export const VER_OPT_KEYS = /* @__PURE__ */ Object.freeze([
+    'context',
+]);
+/** Keys accepted by `sign`. */
+export const SIG_OPT_KEYS = /* @__PURE__ */ Object.freeze([
+    'context',
+    'extraEntropy',
+]);
+/**
+ * Rejects option keys the caller did not mean to set.
+ *
+ * Validating the types of known keys while ignoring unknown ones makes a typo
+ * indistinguishable from an omission, and for these options an omission is a
+ * security downgrade rather than a no-op: `{ ctx }` instead of `{ context }` signs
+ * with no domain separation, succeeds, and verifies for anyone who also supplies
+ * none. Nothing at any layer reports it. TypeScript catches this through excess
+ * property checks, so the exposure is JavaScript callers specifically.
+ *
+ * @param opts - Options object to check.
+ * @param allowed - The keys this call site accepts.
+ * Returns a frozen null-prototype snapshot so later reads cannot fall through to a polluted
+ * prototype. Like `checkOpts()` in noble-hashes, only enumerable own properties are copied.
+ * @throws If any other copied key is present or the bag has a custom prototype. {@link TypeError}
+ * @returns Sanitized snapshot of the enumerable own options.
+ * @example
+ * Accept a known option key. A key the list does not name, such as `ctx`, throws instead.
+ * ```ts
+ * import { checkOptKeys } from '@noble/post-quantum/utils.js';
+ * checkOptKeys({ context: new Uint8Array() }, ['context']);
+ * ```
+ */
+export function checkOptKeys(opts, allowed) {
+    validateOpts(opts);
+    // Snapshot once before validation: Object.assign follows the same own-enumerable option-bag
+    // semantics as noble-hashes, while the null prototype keeps omitted fields immune to pollution.
+    const normalized = Object.assign(Object.create(null), opts);
+    for (const [k, v] of Object.entries(normalized)) {
+        // `undefined` means unset everywhere else in these validators, and building an options bag by
+        // spread is a normal way to reach these calls, so present-but-undefined stays equivalent to
+        // omission.
+        if (v === undefined)
+            continue;
+        if (!allowed.includes(k))
+            throw new TypeError('unexpected option "' + String(k) + '"; expected one of: ' + allowed.join(', '));
+    }
+    return Object.freeze(normalized);
 }
 /**
  * Validates common verification options.
  * `context` itself is validated with `abytes(...)`, and individual algorithms may narrow support
  * further after this shared plain-object gate.
  * @param opts - Verification options. See {@link VerOpts}.
+ * @param allowed - Keys this call site accepts. Defaults to {@link VER_OPT_KEYS}; surfaces that
+ * take extra keys, or take fewer, pass their own list.
  * @throws On wrong argument types. {@link TypeError}
+ * @returns Frozen null-prototype snapshot of the validated options.
  * @example
  * Validate common verification options.
  * ```ts
  * validateVerOpts({ context: new Uint8Array([1]) });
  * ```
  */
-export function validateVerOpts(opts) {
-    validateOpts(opts);
-    if (opts.context !== undefined)
-        abytes(opts.context, undefined, 'opts.context');
+export function validateVerOpts(opts, allowed = VER_OPT_KEYS) {
+    const normalized = checkOptKeys(opts, allowed);
+    if (normalized.context !== undefined)
+        abytes(normalized.context, undefined, 'opts.context');
+    return normalized;
 }
 /**
  * Validates common signing options.
  * `extraEntropy` is validated with `abytes(...)`; exact lengths and extra algorithm-specific
  * restrictions are enforced later by callers.
  * @param opts - Signing options. See {@link SigOpts}.
+ * @param allowed - Keys this call site accepts. Defaults to {@link SIG_OPT_KEYS}; surfaces that
+ * take extra keys, or take fewer, pass their own list.
  * @throws On wrong argument types. {@link TypeError}
+ * @returns Frozen null-prototype snapshot of the validated options.
  * @example
  * Validate common signing options.
  * ```ts
  * validateSigOpts({ extraEntropy: new Uint8Array([1]) });
  * ```
  */
-export function validateSigOpts(opts) {
-    validateVerOpts(opts);
-    if (opts.extraEntropy !== false && opts.extraEntropy !== undefined)
-        abytes(opts.extraEntropy, undefined, 'opts.extraEntropy');
+export function validateSigOpts(opts, allowed = SIG_OPT_KEYS) {
+    const normalized = checkOptKeys(opts, allowed);
+    if (normalized.context !== undefined)
+        abytes(normalized.context, undefined, 'opts.context');
+    if (normalized.extraEntropy !== false && normalized.extraEntropy !== undefined)
+        abytes(normalized.extraEntropy, undefined, 'opts.extraEntropy');
+    return normalized;
 }
 /**
  * Builds a fixed-layout coder from byte lengths and nested coders.
@@ -352,6 +420,19 @@ export function getMessage(msg, ctx = EMPTY) {
 // 06 09 60 86 48 01 65 03 04 02
 const oidNistP = /* @__PURE__ */ Uint8Array.from([6, 9, 0x60, 0x86, 0x48, 1, 0x65, 3, 4, 2]);
 /**
+ * Output length, in bytes, that each XOF OID under this arc denotes.
+ *
+ * Unlike a fixed hash, an XOF's OID is a promise about the digest length: RFC 8702
+ * defines id-shake128 as SHAKE128 with 256-bit output and id-shake256 as SHAKE256 with
+ * 512-bit output, and FIPS 204 / FIPS 205 use exactly those pairings for pre-hash. Both
+ * bare noble-hashes defaults are half these values, so neither can be signed under its
+ * own OID.
+ */
+const XOF_OID_OUTPUT_LEN = /* @__PURE__ */ (() => ({
+    '060960864801650304020b': 32, // id-shake128, SHAKE128(M, 256)
+    '060960864801650304020c': 64, // id-shake256, SHAKE256(M, 512)
+}))();
+/**
  * Validates that a hash exposes a NIST hash OID and enough collision resistance.
  * Current accepted surface is broader than the FIPS algorithm tables: any hash/XOF under the NIST
  * `2.16.840.1.101.3.4.2.*` subtree is accepted if its effective `outputLen` is strong enough.
@@ -380,6 +461,18 @@ export function checkHash(hash, requiredStrength = 0) {
     // FIPS 204 / FIPS 205 require both collision and second-preimage strength; for approved NIST
     // hashes/XOFs under this OID subtree, the collision bound from the configured digest length is
     // the tighter runtime check, so enforce that lower bound here.
+    // XOFs under this arc are identified by an OID that fixes their output length:
+    // FIPS 204 §5.4.1 (SHAKE128) and FIPS 205 §10.2.2 (both SHAKEs), matching RFC 8702, pair
+    // id-shake128 with SHAKE128(M, 256) and id-shake256 with SHAKE256(M, 512). getMessagePrehash embeds
+    // hash.oid beside hash(msg), so a shorter digest signs an M' that claims a length
+    // it does not have: noble-hashes' bare shake256 defaults to 32 bytes and cleared
+    // the collision bound at the 128-bit level, producing signatures a conformant
+    // verifier rejects because it recomputes 512 bits. Check the length the OID
+    // denotes rather than the generic bound.
+    const xofLen = XOF_OID_OUTPUT_LEN[bytesToHex(oid)];
+    if (xofLen !== undefined && hash.outputLen !== xofLen) {
+        throw new Error('Pre-hash XOF output length must be ' + xofLen + ' bytes for this OID, got: ' + hash.outputLen);
+    }
     const collisionResistance = (hash.outputLen * 8) / 2;
     if (requiredStrength > collisionResistance) {
         throw new Error('Pre-hash security strength too low: ' +

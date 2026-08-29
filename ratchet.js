@@ -14,12 +14,12 @@ export async function CreateInit(contactFp, plaintextStr) {
     const localPubBytes = serializeIdentityPublic(local);
     const peerPubBytes = decodeBase64URL(contact.bundle);
     const peerId = parseIdentityPublic(peerPubBytes);
-    const ekKP = keygenX25519();
-    const kemRes = encapsulateMLKEM1024(peerId.pqPk);
-    const dh1 = getSharedSecretX25519(ekKP.secretKey, peerId.dhPk);
+    const ekKP = await keygenX25519();
+    const kemRes = await encapsulateMLKEM1024(peerId.kemPk);
+    const dh1 = await getSharedSecretX25519(ekKP.secretKey, peerId.dhPk);
     const SK = await hkdfSHA256(concatBytes(new TextEncoder().encode('ECP-INIT-v1'), dh1, kemRes.sharedSecret), new Uint8Array(32), new TextEncoder().encode(''), 32);
     const sigInput = concatBytes(new TextEncoder().encode('ECP-INIT-v1'), localPubBytes, peerPubBytes, ekKP.publicKey, kemRes.cipherText);
-    const sig = signMLDSA87(sigInput, local.dsaSk);
+    const sig = await signMLDSA87(sigInput, local.dsaSk);
     const MK0 = await hkdfSHA256(SK, new Uint8Array(32), new TextEncoder().encode('ECP-INIT-MESSAGE-v1'), 32);
     const aesKeyInit = await hkdfSHA256(MK0, new Uint8Array(32), new TextEncoder().encode('ECP-AES256GCM-v1'), 32);
     const nonceInitBytes = await hmacSHA256(MK0, new TextEncoder().encode('ECP-INIT-NONCE'));
@@ -75,7 +75,7 @@ export async function ProcessInit(packetBytes) {
         throw new Error('Self-messaging prohibited: packet sent by local node.');
     const senderId = parseIdentityPublic(sIdBytes);
     const sigInput = concatBytes(new TextEncoder().encode('ECP-INIT-v1'), sIdBytes, rIdBytes, ekPubBytes, kemCt);
-    if (!verifyMLDSA87(sig, sigInput, senderId.signPk))
+    if (!(await verifyMLDSA87(sig, sigInput, senderId.dsaPk)))
         throw new Error('INIT signature rejected');
     let contact = await DB.get('contacts', senderFp);
     if (!contact) {
@@ -89,8 +89,8 @@ export async function ProcessInit(packetBytes) {
         };
         await DB.put('contacts', contact);
     }
-    const dh1 = getSharedSecretX25519(local.dhSk, ekPubBytes);
-    const SK = await hkdfSHA256(concatBytes(new TextEncoder().encode('ECP-INIT-v1'), dh1, decapsulateMLKEM1024(kemCt, local.kemSk)), new Uint8Array(32), new TextEncoder().encode(''), 32);
+    const dh1 = await getSharedSecretX25519(local.dhSk, ekPubBytes);
+    const SK = await hkdfSHA256(concatBytes(new TextEncoder().encode('ECP-INIT-v1'), dh1, await decapsulateMLKEM1024(kemCt, local.kemSk)), new Uint8Array(32), new TextEncoder().encode(''), 32);
     const MK0 = await hkdfSHA256(SK, new Uint8Array(32), new TextEncoder().encode('ECP-INIT-MESSAGE-v1'), 32);
     const aesKeyInit = await hkdfSHA256(MK0, new Uint8Array(32), new TextEncoder().encode('ECP-AES256GCM-v1'), 32);
     const nonceBytes = await hmacSHA256(MK0, new TextEncoder().encode('ECP-INIT-NONCE'));
@@ -103,9 +103,9 @@ export async function ProcessInit(packetBytes) {
         MK0.fill(0);
     }
     const RK0 = await hkdfSHA256(SK, new Uint8Array(32), new TextEncoder().encode('ECP-DR-ROOT-v1'), 32);
-    const dhsKP = keygenX25519();
+    const dhsKP = await keygenX25519();
     const dhsPubBytes = dhsKP.publicKey;
-    const dh2 = getSharedSecretX25519(dhsKP.secretKey, ekPubBytes);
+    const dh2 = await getSharedSecretX25519(dhsKP.secretKey, ekPubBytes);
     const drIkm = await hkdfSHA256(dh2, RK0, new TextEncoder().encode('ECP-DR-RK-v1'), 64);
     const cmp = memcmp(localPubBytes, sIdBytes);
     const convIdHash = await sha256(concatBytes(new TextEncoder().encode('ECP-CONVERSATION-v1'), cmp < 0 ? localPubBytes : sIdBytes, cmp < 0 ? sIdBytes : localPubBytes));
@@ -165,7 +165,7 @@ export async function ProcessResp(packetBytes) {
     finally {
         rKey.fill(0);
     }
-    const dh2 = getSharedSecretX25519(session.DHs.sk, rPubBytes);
+    const dh2 = await getSharedSecretX25519(session.DHs.sk, rPubBytes);
     const drIkm = await hkdfSHA256(dh2, session.RK, new TextEncoder().encode('ECP-DR-RK-v1'), 64);
     const oldRK = session.RK;
     session.RK = drIkm.slice(0, 32);
@@ -183,7 +183,7 @@ export async function ProcessResp(packetBytes) {
 }
 export async function stepDH(s, rPubBytes) {
     if (rPubBytes) {
-        const dh = getSharedSecretX25519(s.DHs.sk, rPubBytes);
+        const dh = await getSharedSecretX25519(s.DHs.sk, rPubBytes);
         const drIkm = await hkdfSHA256(dh, s.RK, new TextEncoder().encode('ECP-DR-RK-v1'), 64);
         const oldRK = s.RK;
         s.RK = drIkm.slice(0, 32);
@@ -191,10 +191,10 @@ export async function stepDH(s, rPubBytes) {
         s.DHr = { pk: rPubBytes };
         oldRK.fill(0);
     }
-    const nkp = keygenX25519();
+    const nkp = await keygenX25519();
     if (!s.DHr)
         throw new Error('Cannot step DH: Remote DH key (DHr) is missing');
-    const dh2 = getSharedSecretX25519(nkp.secretKey, s.DHr.pk);
+    const dh2 = await getSharedSecretX25519(nkp.secretKey, s.DHr.pk);
     const drIkm2 = await hkdfSHA256(dh2, s.RK, new TextEncoder().encode('ECP-DR-RK-v1'), 64);
     const oldRK2 = s.RK;
     s.RK = drIkm2.slice(0, 32);

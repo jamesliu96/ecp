@@ -1,5 +1,5 @@
 import {} from "./pbkdf2.js";
-import { abytes, ahash, anumber, checkOpts, kdfInputToBytes, } from "./utils.js";
+import { abytes, ahash, anumber, checkOpts, clean, copyBytes, kdfInputToBytes, } from "./utils.js";
 function _subtle() {
     const cr = typeof globalThis === 'object' ? globalThis.crypto : null;
     const sb = cr?.subtle;
@@ -27,8 +27,10 @@ function createWebHash(name, blockLen, outputLen) {
 }
 function ahashWeb(hash) {
     ahash(hash);
-    if (typeof hash.webCryptoName !== 'string')
+    const name = hash.webCryptoName;
+    if (typeof name !== 'string')
         throw new Error('non-web hash');
+    return name;
 }
 /** WebCrypto SHA1 (RFC 3174) legacy hash function. It was cryptographically broken. */
 // export const sha1: WebHash = createHash('SHA-1', 64, 20);
@@ -87,11 +89,19 @@ export const hmac = /* @__PURE__ */ (() => {
         const crypto = _subtle();
         abytes(key, undefined, 'key');
         abytes(message, undefined, 'message');
-        ahashWeb(hash);
-        // WebCrypto keys can't be zeroized
-        // prettier-ignore
-        const wkey = await crypto.importKey('raw', key, { name: 'HMAC', hash: hash.webCryptoName }, false, ['sign']);
-        return new Uint8Array(await crypto.sign('HMAC', wkey, message));
+        const hashName = ahashWeb(hash);
+        // importKey() snapshots key synchronously, but message is not passed to sign() until after
+        // importKey() resolves. Keep the wrapper's inputs stable across that await.
+        const _message = copyBytes(message);
+        try {
+            // WebCrypto keys can't be zeroized
+            // prettier-ignore
+            const wkey = await crypto.importKey('raw', key, { name: 'HMAC', hash: hashName }, false, ['sign']);
+            return new Uint8Array(await crypto.sign('HMAC', wkey, _message));
+        }
+        finally {
+            clean(_message);
+        }
     };
     hmac_.create = (_hash, _key) => {
         throw new Error('not implemented');
@@ -108,8 +118,7 @@ export const hmac = /* @__PURE__ */ (() => {
  * @param length - length of output keying material in bytes.
  *   RFC 5869 §2.3 allows `0..255*HashLen`, so `0` requests an empty OKM.
  * @returns Promise resolving to derived key bytes.
- * The RFC `L <= 255 * HashLen` bound is currently enforced only by backend
- * `deriveBits()` rejection, not by an explicit library-side guard.
+ * The RFC `L <= 255 * HashLen` bound is enforced before calling WebCrypto.
  * @throws If the current runtime does not provide `crypto.subtle`. {@link Error}
  * @example
  * WebCrypto HKDF (RFC 5869): derive keys from an initial input.
@@ -124,21 +133,32 @@ export const hmac = /* @__PURE__ */ (() => {
  */
 export async function hkdf(hash, ikm, salt, info, length) {
     const crypto = _subtle();
-    ahashWeb(hash);
+    const hashName = ahashWeb(hash);
+    const hashOutputLen = hash.outputLen;
     abytes(ikm, undefined, 'ikm');
     anumber(length, 'length');
+    if (length > 255 * hashOutputLen)
+        throw new Error('Length must be <= 255*HashLen');
     if (salt !== undefined)
         abytes(salt, undefined, 'salt');
     if (info !== undefined)
         abytes(info, undefined, 'info');
-    const wkey = await crypto.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
-    const opts = {
-        name: 'HKDF',
-        hash: hash.webCryptoName,
-        salt: salt === undefined ? new Uint8Array(0) : salt,
-        info: info === undefined ? new Uint8Array(0) : info,
-    };
-    return new Uint8Array(await crypto.deriveBits(opts, wkey, 8 * length));
+    // salt and info reach deriveBits() only after importKey() resolves, so snapshot them now.
+    const _salt = salt === undefined ? new Uint8Array(0) : copyBytes(salt);
+    const _info = info === undefined ? new Uint8Array(0) : copyBytes(info);
+    try {
+        const wkey = await crypto.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
+        const opts = { name: 'HKDF', hash: hashName, salt: _salt, info: _info };
+        const out = new Uint8Array(await crypto.deriveBits(opts, wkey, 8 * length));
+        if (out.length !== length) {
+            clean(out);
+            throw new Error('WebCrypto returned an invalid derived key length');
+        }
+        return out;
+    }
+    finally {
+        clean(_salt, _info);
+    }
 }
 /**
  * WebCrypto PBKDF2-HMAC: RFC 8018 key derivation function.
@@ -152,7 +172,7 @@ export async function hkdf(hash, ikm, salt, info, length) {
  * @returns Promise resolving to derived key bytes.
  * Positive-iteration enforcement is currently delegated to backend
  * `deriveBits()` rejection (for example `c = 0`), not a dedicated
- * library-side guard.
+ * library-side guard. Values above the signed 32-bit backend range are rejected locally.
  * @throws If the current runtime does not provide `crypto.subtle`. {@link Error}
  * @example
  * WebCrypto PBKDF2-HMAC: RFC 2898 key derivation function.
@@ -163,19 +183,46 @@ export async function hkdf(hash, ikm, salt, info, length) {
  */
 export async function pbkdf2(hash, password, salt, opts) {
     const crypto = _subtle();
-    ahashWeb(hash);
+    const hashName = ahashWeb(hash);
     const _opts = checkOpts({ dkLen: 32 }, opts);
     const { c, dkLen } = _opts;
     anumber(c, 'c');
     anumber(dkLen, 'dkLen');
+    // Node's native WebCrypto PBKDF2 binding accepts only a signed 32-bit iteration count and aborts
+    // the process on larger values instead of returning a rejected promise.
+    if (c > 0x7fffffff)
+        throw new Error('"c" exceeds WebCrypto backend limit');
     // RFC 8018 §5.2 defines dkLen as a positive integer.
     if (dkLen < 1)
         throw new Error('"dkLen" must be >= 1');
+    // SubtleCrypto.deriveBits() accepts an unsigned-long bit count. Byte lengths at or above
+    // 2^29 would wrap after multiplication by eight instead of requesting the intended length.
+    if (dkLen >= 2 ** 29)
+        throw new Error('derived key too long');
     const _password = kdfInputToBytes(password, 'password');
-    const _salt = kdfInputToBytes(salt, 'salt');
-    const key = await crypto.importKey('raw', _password, 'PBKDF2', false, [
-        'deriveBits',
-    ]);
-    const deriveOpts = { name: 'PBKDF2', salt: _salt, iterations: c, hash: hash.webCryptoName };
-    return new Uint8Array(await crypto.deriveBits(deriveOpts, key, 8 * dkLen));
+    try {
+        const saltBytes = kdfInputToBytes(salt, 'salt');
+        // String conversion already returns an owned array. Caller-owned byte salts need a snapshot
+        // because deriveBits() does not receive them until after importKey() resolves.
+        const _salt = typeof salt === 'string' ? saltBytes : copyBytes(saltBytes);
+        try {
+            const key = await crypto.importKey('raw', _password, 'PBKDF2', false, [
+                'deriveBits',
+            ]);
+            const deriveOpts = { name: 'PBKDF2', salt: _salt, iterations: c, hash: hashName };
+            const out = new Uint8Array(await crypto.deriveBits(deriveOpts, key, 8 * dkLen));
+            if (out.length !== dkLen) {
+                clean(out);
+                throw new Error('WebCrypto returned an invalid derived key length');
+            }
+            return out;
+        }
+        finally {
+            clean(_salt);
+        }
+    }
+    finally {
+        if (typeof password === 'string')
+            clean(_password);
+    }
 }

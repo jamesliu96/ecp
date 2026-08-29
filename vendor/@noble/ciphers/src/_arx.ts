@@ -48,6 +48,7 @@ import {
   anumber,
   checkOpts,
   clean,
+  complexOverlapBytes,
   copyBytes,
   getOutput,
   isAligned32,
@@ -257,7 +258,9 @@ export function createCipher(core: TArg<CipherCoreFn>, opts: TArg<CipherOpts>): 
     const len = data.length;
     // Raw XorStream APIs return ciphertext/plaintext bytes directly, so caller-provided outputs
     // must match the logical result length exactly instead of returning an oversized workspace.
+    const hasOutput = output !== undefined;
     output = getOutput(len, output, false);
+    if (hasOutput) complexOverlapBytes(data, output);
     anumber(counter);
     // See MAX_COUNTER policy note above: reject advanced explicit-counter requests before any wrap.
     if (counter < 0 || counter >= MAX_COUNTER) throw new Error('arx: counter overflow');
@@ -348,6 +351,7 @@ export class _XorStreamPRG implements PRG {
   private pos: number;
   private ctr: number;
   private cipher: TArg<XorStream>;
+  private destroyed = false;
   constructor(
     cipher: TArg<XorStream>,
     blockLen: number,
@@ -379,6 +383,7 @@ export class _XorStreamPRG implements PRG {
     this.pos = this.blockLen;
   }
   addEntropy(seed: TArg<Uint8Array>): void {
+    if (this.destroyed) throw new Error('cannot use destroyed PRG');
     // Reject empty entropy before re-keying, otherwise a throwing call would still advance state.
     abytes(seed, undefined, 'seed');
     if (seed.length === 0) throw new Error('entropy required');
@@ -388,6 +393,7 @@ export class _XorStreamPRG implements PRG {
     this.reseed(seed);
   }
   randomBytes(len: number): TRet<Uint8Array> {
+    if (this.destroyed) throw new Error('cannot use destroyed PRG');
     anumber(len);
     if (len === 0) return new Uint8Array(0) as TRet<Uint8Array>;
     const avail = this.pos < this.blockLen ? this.blockLen - this.pos : 0;
@@ -435,6 +441,7 @@ export class _XorStreamPRG implements PRG {
   }
   // Clone seeds the new instance from this stream, so the source PRG advances too.
   clone(): _XorStreamPRG {
+    if (this.destroyed) throw new Error('cannot use destroyed PRG');
     return new _XorStreamPRG(
       this.cipher,
       this.blockLen,
@@ -443,14 +450,15 @@ export class _XorStreamPRG implements PRG {
       this.randomBytes(this.state.length)
     );
   }
-  // Zeroes the current state and leftover buffer, but does not make the instance unusable:
-  // Later reads first drain zeros from the cleared buffer and then continue
-  // from zero key||nonce state.
+  // Zeroes the current state, leftover buffer, and marks the instance destroyed.
+  // The instance fails closed: any later randomBytes()/addEntropy()/clone() throws instead
+  // of silently continuing from zero key||nonce state (which would yield predictable output).
   clean(): void {
     this.pos = 0;
     this.ctr = 0;
     this.buf.fill(0);
     this.state.fill(0);
+    this.destroyed = true;
   }
 }
 

@@ -388,8 +388,7 @@ export declare function bytesToUtf8(bytes: TArg<Uint8Array>): string;
 export declare function overlapBytes(a: TArg<Uint8Array>, b: TArg<Uint8Array>): boolean;
 /**
  * If input and output overlap and input starts before output, we will overwrite end of input before
- * we start processing it, so this is not supported for most ciphers
- * (except chacha/salsa, which were designed for this)
+ * we start processing it, so this is not supported by forward-processing ciphers.
  * @param input - Input bytes.
  * @param output - Output bytes.
  * @throws If the output view would overwrite unread input bytes. {@link Error}
@@ -397,7 +396,8 @@ export declare function overlapBytes(a: TArg<Uint8Array>, b: TArg<Uint8Array>): 
  * Rejects an in-place layout that would overwrite unread input bytes.
  *
  * ```ts
- * complexOverlapBytes(new Uint8Array(4), new Uint8Array(4));
+ * const buffer = new Uint8Array(8);
+ * complexOverlapBytes(buffer.subarray(0, 4), buffer.subarray(2, 6));
  * ```
  */
 export declare function complexOverlapBytes(input: TArg<Uint8Array>, output: TArg<Uint8Array>): void;

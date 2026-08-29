@@ -41,7 +41,7 @@ There seems no reasonable way to check for availability, other than actually cal
  * @module
  */
 /*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) */
-import { abytes, validateObject } from "./utils.js";
+import { abytes, copyBytes, isBytes, validateObject } from "./utils.js";
 /** Raw type */
 const TYPE_RAW = 'raw';
 const TYPE_JWK = 'jwk';
@@ -74,6 +74,16 @@ function hexToBytesLocal(hex) {
 export const __TEST = /* @__PURE__ */ Object.freeze({
     hexToBytesLocal,
 });
+function copyJwk(key) {
+    const copy = { ...key };
+    // Standard JWKs only nest `key_ops`, but copy every top-level array so extensions cannot retain
+    // a writable alias across an async boundary either.
+    for (const [name, value] of Object.entries(copy)) {
+        if (Array.isArray(value))
+            copy[name] = value.slice();
+    }
+    return copy;
+}
 function assertType(type, key) {
     // Callers are expected to pass a non-null key-like object; `null` / `undefined` still fail first
     // via property access before reaching the explicit wrapper error.
@@ -215,14 +225,19 @@ function createSigner(keys, algo) {
         // high-S ECDSA outputs into software noble's low-S convention.
         async sign(msgHash, secretKey, opts = {}) {
             validateObject(opts, {}, { formatSec: 'string', formatPub: 'string' }, 'opts');
+            // Snapshot before the first await so a writable alias cannot replace the message.
+            const message = copyBytes(abytes(msgHash, undefined, 'message'));
             const key = await keys.priv.import(secretKey, opts.formatSec ?? dfsec);
-            const sig = await getSubtle().sign(algo, key, msgHash);
+            const sig = await getSubtle().sign(algo, key, message);
             return new Uint8Array(sig);
         },
         async verify(signature, msgHash, publicKey, opts = {}) {
             validateObject(opts, {}, { formatSec: 'string', formatPub: 'string' }, 'opts');
+            // Snapshot both deferred byte inputs before awaiting key import.
+            const signatureBytes = copyBytes(abytes(signature, undefined, 'signature'));
+            const message = copyBytes(abytes(msgHash, undefined, 'message'));
             const key = await keys.pub.import(publicKey, opts.formatPub ?? dfpub);
-            return await getSubtle().verify(algo, key, signature, msgHash);
+            return await getSubtle().verify(algo, key, signatureBytes, message);
         },
     };
 }
@@ -232,9 +247,15 @@ function createECDH(keys, algo, keyLen) {
         // still narrower than that accepted surface.
         async getSharedSecret(secretKeyA, publicKeyB, opts = {}) {
             validateObject(opts, {}, { formatSec: 'string', formatPub: 'string' }, 'opts');
-            // if (_isCompressed !== true) throw new Error('WebCrypto only supports compressed keys');
-            const secKey = await keys.priv.import(secretKeyA, opts.formatSec === undefined ? dfsec : opts.formatSec);
-            const pubKey = await keys.pub.import(publicKeyB, opts.formatPub === undefined ? dfpub : opts.formatPub);
+            // Snapshot every deferred input before importing the local key: that import awaits before the
+            // peer and public-key format are consumed.
+            const formatSec = opts.formatSec === undefined ? dfsec : opts.formatSec;
+            const formatPub = opts.formatPub === undefined ? dfpub : opts.formatPub;
+            const peer = isBytes(publicKeyB)
+                ? copyBytes(abytes(publicKeyB, undefined, 'publicKey'))
+                : copyJwk(publicKeyB);
+            const secKey = await keys.priv.import(secretKeyA, formatSec);
+            const pubKey = await keys.pub.import(peer, formatPub);
             const shared = await getSubtle().deriveBits({ name: typeof algo === 'string' ? algo : algo.name, public: pubKey }, secKey, 8 * keyLen);
             return new Uint8Array(shared);
         },

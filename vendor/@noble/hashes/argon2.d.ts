@@ -1,12 +1,12 @@
 import { type KDFInput, type TArg, type TRet } from './utils.ts';
 /** Argon2 cost, output, and optional secret/personalization inputs. */
 export type ArgonOpts = {
-    /** Time cost measured in iterations. */
-    t: number;
-    /** Memory cost in kibibytes. */
-    m: number;
-    /** Parallelization parameter. */
-    p: number;
+    /** Time cost measured in iterations. Defaults to `3`. */
+    t?: number;
+    /** Memory cost in kibibytes. Defaults to `1024 ** 2` (1 GiB). */
+    m?: number;
+    /** Parallelization parameter. Defaults to `1`. */
+    p?: number;
     /** Argon2 version number. Defaults to `0x13`. */
     version?: number;
     /** Optional secret key mixed into initialization. */
@@ -17,7 +17,7 @@ export type ArgonOpts = {
     dkLen?: number;
     /** Max scheduler block time in milliseconds for the async variants. */
     asyncTick?: number;
-    /** Maximum temporary memory budget in bytes. */
+    /** Maximum temporary memory budget in bytes. Defaults to 1 GiB. */
     maxmem?: number;
     /**
      * Optional progress callback invoked during long-running derivations.
@@ -57,7 +57,7 @@ export type ArgonOpts = {
  * });
  * ```
  */
-export declare const argon2d: (password: TArg<KDFInput>, salt: TArg<KDFInput>, opts: TArg<ArgonOpts>) => TRet<Uint8Array>;
+export declare const argon2d: (password: TArg<KDFInput>, salt: TArg<KDFInput>, opts?: TArg<ArgonOpts>) => TRet<Uint8Array>;
 /**
  * Argon2i side-channel-resistant version.
  * @param password - password or input key material
@@ -71,7 +71,7 @@ export declare const argon2d: (password: TArg<KDFInput>, salt: TArg<KDFInput>, o
  * argon2i('password', 'salt1234', { t: 1, m: 8, p: 1, dkLen: 32 });
  * ```
  */
-export declare const argon2i: (password: TArg<KDFInput>, salt: TArg<KDFInput>, opts: TArg<ArgonOpts>) => TRet<Uint8Array>;
+export declare const argon2i: (password: TArg<KDFInput>, salt: TArg<KDFInput>, opts?: TArg<ArgonOpts>) => TRet<Uint8Array>;
 /**
  * Argon2id, combining i+d, the most popular version from RFC 9106.
  * @param password - password or input key material
@@ -85,7 +85,7 @@ export declare const argon2i: (password: TArg<KDFInput>, salt: TArg<KDFInput>, o
  * argon2id('password', 'salt1234', { t: 1, m: 8, p: 1, dkLen: 32 });
  * ```
  */
-export declare const argon2id: (password: TArg<KDFInput>, salt: TArg<KDFInput>, opts: TArg<ArgonOpts>) => TRet<Uint8Array>;
+export declare const argon2id: (password: TArg<KDFInput>, salt: TArg<KDFInput>, opts?: TArg<ArgonOpts>) => TRet<Uint8Array>;
 /**
  * Argon2d async GPU-resistant version.
  * @param password - password or input key material
@@ -117,7 +117,7 @@ export declare const argon2id: (password: TArg<KDFInput>, salt: TArg<KDFInput>, 
  * });
  * ```
  */
-export declare const argon2dAsync: (password: TArg<KDFInput>, salt: TArg<KDFInput>, opts: TArg<ArgonOpts>) => Promise<TRet<Uint8Array>>;
+export declare const argon2dAsync: (password: TArg<KDFInput>, salt: TArg<KDFInput>, opts?: TArg<ArgonOpts>) => Promise<TRet<Uint8Array>>;
 /**
  * Argon2i async side-channel-resistant version.
  * @param password - password or input key material
@@ -131,7 +131,7 @@ export declare const argon2dAsync: (password: TArg<KDFInput>, salt: TArg<KDFInpu
  * await argon2iAsync('password', 'salt1234', { t: 1, m: 8, p: 1, dkLen: 32 });
  * ```
  */
-export declare const argon2iAsync: (password: TArg<KDFInput>, salt: TArg<KDFInput>, opts: TArg<ArgonOpts>) => Promise<TRet<Uint8Array>>;
+export declare const argon2iAsync: (password: TArg<KDFInput>, salt: TArg<KDFInput>, opts?: TArg<ArgonOpts>) => Promise<TRet<Uint8Array>>;
 /**
  * Argon2id async, combining i+d, the most popular version from RFC 9106.
  * @param password - password or input key material
@@ -145,4 +145,4 @@ export declare const argon2iAsync: (password: TArg<KDFInput>, salt: TArg<KDFInpu
  * await argon2idAsync('password', 'salt1234', { t: 1, m: 8, p: 1, dkLen: 32 });
  * ```
  */
-export declare const argon2idAsync: (password: TArg<KDFInput>, salt: TArg<KDFInput>, opts: TArg<ArgonOpts>) => Promise<TRet<Uint8Array>>;
+export declare const argon2idAsync: (password: TArg<KDFInput>, salt: TArg<KDFInput>, opts?: TArg<ArgonOpts>) => Promise<TRet<Uint8Array>>;

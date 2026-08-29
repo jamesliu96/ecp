@@ -8,7 +8,6 @@
  * * JS arrays do slow bound checks, so reading from `A2_BUF` slows it down
  * @module
  */
-import { rotr32H, rotr32L, rotrBH, rotrBL, rotrSH, rotrSL } from "./_u64.js";
 import { blake2b } from "./blake2.js";
 import { anumber, checkOpts, clean, kdfInputToBytes, nextTick, swap32IfBE, swap8IfBE, u32, u8, } from "./utils.js";
 // RFC 9106 §3.1 type `y`: 0 = Argon2d, 1 = Argon2i, 2 = Argon2id. The numeric values are the
@@ -23,39 +22,16 @@ const abytesOrZero = (buf, errorTitle = '') => {
         return Uint8Array.of();
     return kdfInputToBytes(buf, errorTitle);
 };
-// Unsigned `u32 * u32 = { h, l }`, returned as split 64-bit halves.
-function mul(a, b) {
-    // Split into 16-bit limbs so each partial product stays exact under `Math.imul`.
-    const aL = a & 0xffff;
-    const aH = a >>> 16;
-    const bL = b & 0xffff;
-    const bH = b >>> 16;
-    const ll = Math.imul(aL, bL);
-    const hl = Math.imul(aH, bL);
-    const lh = Math.imul(aL, bH);
-    const hh = Math.imul(aH, bH);
-    const carry = (ll >>> 16) + (hl & 0xffff) + lh;
-    const high = (hh + (hl >>> 16) + (carry >>> 16)) | 0;
-    const low = (carry << 16) | (ll & 0xffff);
-    return { h: high, l: low };
-}
-// High 32 bits of unsigned u32 multiply, via the same 16-bit limb split as `mul` below.
-// Kept single-purpose and number-returning so V8 inlines it (object-returning
-// helpers here cost 2.2x of the whole derivation, measured; small helpers
-// returning one number are free — see rotr* usage everywhere).
-function mulHi(a, b) {
-    const aL = a & 0xffff, aH = a >>> 16, bL = b & 0xffff, bH = b >>> 16; // prettier-ignore
-    const carry = (Math.imul(aL, bL) >>> 16) + (Math.imul(aH, bL) & 0xffff) + Math.imul(aL, bH);
-    return (Math.imul(aH, bH) + (Math.imul(aH, bL) >>> 16) + (carry >>> 16)) | 0;
-}
 // Temporary block buffer.
 // 1024-byte block: 256 u32 = 128 interleaved low/high halves = RFC's
 // 8x8 matrix of 16-byte registers.
 const A2_BUF = new Uint32Array(256);
 // Quarter-round over 64-bit word indices into `A2_BUF`; each index maps to adjacent low/high u32s.
-// Each BlaMka step `X = X + Y + 2 * trunc(X) * trunc(Y)` (trunc = low 32 bits) is three lines:
-// `Math.imul` is the low product half, `mulHi` the high half, then a split 64-bit add with the
-// doubling folded in. RFC 9106 Figure 19 GB rotates by 32, 24, 16, and 63 bits after each XOR.
+// Each BlaMka step `X = X + Y + 2 * trunc(X) * trunc(Y)` (trunc = low 32 bits) starts
+// with an exact low product from `Math.imul`. The rounded double product is within 1024 of the
+// exact u64 product; subtracting that exact low half and rounding to the nearest multiple of
+// 2^32 therefore recovers the exact high half. RFC 9106 Figure 19 GB then rotates by 32, 24,
+// 16, and 63 bits after each XOR.
 function G(a, b, c, d) {
     let Al = A2_BUF[2 * a], Ah = A2_BUF[2 * a + 1]; // prettier-ignore
     let Bl = A2_BUF[2 * b], Bh = A2_BUF[2 * b + 1]; // prettier-ignore
@@ -64,44 +40,44 @@ function G(a, b, c, d) {
     let ml = 0, mh = 0, rl = 0, xh = 0, xl = 0; // prettier-ignore
     // A = blamka(A, B); D = rotr64(D ^ A, 32)
     ml = Math.imul(Al, Bl);
-    mh = mulHi(Al, Bl); // prettier-ignore
+    mh = (((Al >>> 0) * (Bl >>> 0) - (ml >>> 0)) / 0x100000000 + 0.5) | 0; // prettier-ignore
     rl = (Al >>> 0) + (Bl >>> 0) + ((ml << 1) >>> 0);
     Ah = (Ah + Bh + ((mh << 1) | (ml >>> 31)) + ((rl / 0x100000000) | 0)) | 0;
     Al = rl | 0; // prettier-ignore
     xh = Dh ^ Ah;
     xl = Dl ^ Al; // prettier-ignore
-    Dh = rotr32H(xh, xl);
-    Dl = rotr32L(xh, xl); // prettier-ignore
+    Dh = xl;
+    Dl = xh; // prettier-ignore
     // C = blamka(C, D); B = rotr64(B ^ C, 24)
     ml = Math.imul(Cl, Dl);
-    mh = mulHi(Cl, Dl); // prettier-ignore
+    mh = (((Cl >>> 0) * (Dl >>> 0) - (ml >>> 0)) / 0x100000000 + 0.5) | 0; // prettier-ignore
     rl = (Cl >>> 0) + (Dl >>> 0) + ((ml << 1) >>> 0);
     Ch = (Ch + Dh + ((mh << 1) | (ml >>> 31)) + ((rl / 0x100000000) | 0)) | 0;
     Cl = rl | 0; // prettier-ignore
     xh = Bh ^ Ch;
     xl = Bl ^ Cl; // prettier-ignore
-    Bh = rotrSH(xh, xl, 24);
-    Bl = rotrSL(xh, xl, 24); // prettier-ignore
+    Bh = (xh >>> 24) | (xl << 8);
+    Bl = (xh << 8) | (xl >>> 24); // prettier-ignore
     // A = blamka(A, B); D = rotr64(D ^ A, 16)
     ml = Math.imul(Al, Bl);
-    mh = mulHi(Al, Bl); // prettier-ignore
+    mh = (((Al >>> 0) * (Bl >>> 0) - (ml >>> 0)) / 0x100000000 + 0.5) | 0; // prettier-ignore
     rl = (Al >>> 0) + (Bl >>> 0) + ((ml << 1) >>> 0);
     Ah = (Ah + Bh + ((mh << 1) | (ml >>> 31)) + ((rl / 0x100000000) | 0)) | 0;
     Al = rl | 0; // prettier-ignore
     xh = Dh ^ Ah;
     xl = Dl ^ Al; // prettier-ignore
-    Dh = rotrSH(xh, xl, 16);
-    Dl = rotrSL(xh, xl, 16); // prettier-ignore
+    Dh = (xh >>> 16) | (xl << 16);
+    Dl = (xh << 16) | (xl >>> 16); // prettier-ignore
     // C = blamka(C, D); B = rotr64(B ^ C, 63)
     ml = Math.imul(Cl, Dl);
-    mh = mulHi(Cl, Dl); // prettier-ignore
+    mh = (((Cl >>> 0) * (Dl >>> 0) - (ml >>> 0)) / 0x100000000 + 0.5) | 0; // prettier-ignore
     rl = (Cl >>> 0) + (Dl >>> 0) + ((ml << 1) >>> 0);
     Ch = (Ch + Dh + ((mh << 1) | (ml >>> 31)) + ((rl / 0x100000000) | 0)) | 0;
     Cl = rl | 0; // prettier-ignore
     xh = Bh ^ Ch;
     xl = Bl ^ Cl; // prettier-ignore
-    Bh = rotrBH(xh, xl, 63);
-    Bl = rotrBL(xh, xl, 63); // prettier-ignore
+    Bh = (xh << 1) | (xl >>> 31);
+    Bl = (xh >>> 31) | (xl << 1); // prettier-ignore
     ((A2_BUF[2 * a] = Al), (A2_BUF[2 * a + 1] = Ah));
     ((A2_BUF[2 * b] = Bl), (A2_BUF[2 * b + 1] = Bh));
     ((A2_BUF[2 * c] = Cl), (A2_BUF[2 * c + 1] = Ch));
@@ -123,8 +99,22 @@ function P(v00, v01, v02, v03, v04, v05, v06, v07, v08, v09, v10, v11, v12, v13,
     G(v03, v04, v09, v14);
 }
 function block(x, xPos, yPos, outPos, needXor) {
-    for (let i = 0; i < 256; i++)
-        A2_BUF[i] = x[xPos + i] ^ x[yPos + i];
+    // Stage R = X xor Y in the destination before permuting it. This avoids rereading both source
+    // blocks when folding R into the permuted scratch block below.
+    if (needXor) {
+        for (let i = 0; i < 256; i++) {
+            const r = x[xPos + i] ^ x[yPos + i];
+            A2_BUF[i] = r;
+            x[outPos + i] ^= r;
+        }
+    }
+    else {
+        for (let i = 0; i < 256; i++) {
+            const r = x[xPos + i] ^ x[yPos + i];
+            A2_BUF[i] = r;
+            x[outPos + i] = r;
+        }
+    }
     // rows (8 consecutive 16-register groups)
     for (let i = 0; i < 128; i += 16) {
         // prettier-ignore
@@ -136,12 +126,8 @@ function block(x, xPos, yPos, outPos, needXor) {
         P(i, i + 1, i + 16, i + 17, i + 32, i + 33, i + 48, i + 49, i + 64, i + 65, i + 80, i + 81, i + 96, i + 97, i + 112, i + 113);
     }
     // RFC 9106 step 6: passes after the first XOR the old destination block into the new G(X, Y).
-    if (needXor)
-        for (let i = 0; i < 256; i++)
-            x[outPos + i] ^= A2_BUF[i] ^ x[xPos + i] ^ x[yPos + i];
-    else
-        for (let i = 0; i < 256; i++)
-            x[outPos + i] = A2_BUF[i] ^ x[xPos + i] ^ x[yPos + i];
+    for (let i = 0; i < 256; i++)
+        x[outPos + i] ^= A2_BUF[i];
     clean(A2_BUF);
 }
 // Variable-Length Hash Function H'
@@ -192,23 +178,31 @@ function indexAlpha(r, s, laneLen, segmentLen, index, randL, sameLane = false) {
     else
         area = laneLen - segmentLen + (index == 0 ? -1 : 0);
     const startPos = r !== 0 && s !== ARGON2_SYNC_POINTS - 1 ? (s + 1) * segmentLen : 0;
-    // RFC 9106 Figure 13: `mul(randL, randL).h` is `floor(J_1^2 / 2^32)`, and the outer high-half
-    // multiply computes `floor(|W| * x / 2^32)` without floating-point math.
-    const rel = area - 1 - mul(area, mul(randL, randL).h).h;
+    // Use the same exact-high recovery as G. `areaHigh` is floor(|W| * J1^2/2^32 / 2^32).
+    const randLow = Math.imul(randL, randL);
+    const randHigh = (((randL >>> 0) * (randL >>> 0) - (randLow >>> 0)) / 0x100000000 + 0.5) | 0;
+    const areaLow = Math.imul(area, randHigh);
+    const areaHigh = (((area >>> 0) * (randHigh >>> 0) - (areaLow >>> 0)) / 0x100000000 + 0.5) | 0;
+    const rel = area - 1 - areaHigh;
     return (startPos + rel) % laneLen;
 }
 // Exclusive `2^32` sentinel used by `isU32(...)`, not the inclusive maximum u32 value.
 const maxUint32 = Math.pow(2, 32);
+const ARGON2_DEFAULT_MEMORY = 1024 ** 2; // KiB: 1 GiB
+const ARGON2_DEFAULT_MAXMEM = ARGON2_DEFAULT_MEMORY * 1024;
 // Validate safe JS integers in `[0, 2^32 - 1]`.
 function isU32(num) {
     return Number.isSafeInteger(num) && num >= 0 && num < maxUint32;
 }
-function argon2Opts(opts) {
+function argon2Opts(opts = {}) {
     opts = checkOpts({}, opts);
     const merged = {
+        t: 3,
+        m: ARGON2_DEFAULT_MEMORY,
+        p: 1,
         version: 0x13,
         dkLen: 32,
-        maxmem: maxUint32 - 1,
+        maxmem: ARGON2_DEFAULT_MAXMEM,
         asyncTick: 10,
     };
     // Unknown keys are copied through unchanged here and later ignored unless
@@ -241,84 +235,114 @@ function argon2Opts(opts) {
         throw new Error('"version" must be 0x10 or 0x13, got ' + version);
     return merged;
 }
-function argon2Init(password, salt, type, opts) {
-    password = kdfInputToBytes(password, 'password');
-    salt = kdfInputToBytes(salt, 'salt');
-    if (!isU32(password.length))
-        throw new Error('"password" must be less of length 1..4Gb');
-    // RFC 9106 §3.1 only requires S <= 2^32-1 bytes and says 16 bytes is RECOMMENDED for password
-    // hashing; this library intentionally takes the stricter common >=8-byte salt path.
-    if (!isU32(salt.length) || salt.length < 8)
-        throw new Error('"salt" must be of length 8..4Gb');
-    if (!Object.values(AT).includes(type))
-        throw new Error('"type" was invalid');
-    let { p, dkLen, m, t, version, key, personalization, maxmem, onProgress, asyncTick } = argon2Opts(opts);
-    // Validation
-    key = abytesOrZero(key, 'key');
-    personalization = abytesOrZero(personalization, 'personalization');
-    // H_0 = H^(64)(LE32(p) || LE32(T) || LE32(m) || LE32(t) ||
-    //       LE32(v) || LE32(y) || LE32(length(P)) || P ||
-    //       LE32(length(S)) || S ||  LE32(length(K)) || K ||
-    //       LE32(length(X)) || X)
-    const h = blake2b.create();
+function argon2InitialHash(password, salt, type, opts) {
+    const ownedInputs = [];
     const BUF = new Uint32Array(1);
     const BUF8 = u8(BUF);
-    for (let item of [p, dkLen, m, t, version, type]) {
-        // RFC 9106 H0 encodes these scalars as LE32, so normalize the host word before exposing bytes.
-        BUF[0] = swap8IfBE(item);
-        h.update(BUF8);
+    let h;
+    let H0;
+    let succeeded = false;
+    const rememberOwned = (input, bytes) => {
+        if (typeof input === 'string')
+            ownedInputs.push(bytes);
+        return bytes;
+    };
+    try {
+        const passwordBytes = rememberOwned(password, kdfInputToBytes(password, 'password'));
+        const saltBytes = rememberOwned(salt, kdfInputToBytes(salt, 'salt'));
+        if (!isU32(passwordBytes.length))
+            throw new Error('"password" must be less of length 1..4Gb');
+        // RFC 9106 §3.1 only requires S <= 2^32-1 bytes and says 16 bytes is RECOMMENDED for password
+        // hashing; this library intentionally takes the stricter common >=8-byte salt path.
+        if (!isU32(saltBytes.length) || saltBytes.length < 8)
+            throw new Error('"salt" must be of length 8..4Gb');
+        if (!Object.values(AT).includes(type))
+            throw new Error('"type" was invalid');
+        let { p, dkLen, m, t, version, key, personalization, maxmem, onProgress, asyncTick } = argon2Opts(opts);
+        // Validation
+        const keyInput = key;
+        key = rememberOwned(keyInput, abytesOrZero(keyInput, 'key'));
+        const personalizationInput = personalization;
+        personalization = rememberOwned(personalizationInput, abytesOrZero(personalizationInput, 'personalization'));
+        // H_0 = H^(64)(LE32(p) || LE32(T) || LE32(m) || LE32(t) ||
+        //       LE32(v) || LE32(y) || LE32(length(P)) || P ||
+        //       LE32(length(S)) || S ||  LE32(length(K)) || K ||
+        //       LE32(length(X)) || X)
+        h = blake2b.create();
+        for (let item of [p, dkLen, m, t, version, type]) {
+            // RFC 9106 H0 encodes these scalars as LE32, so normalize the host word before
+            // exposing bytes.
+            BUF[0] = swap8IfBE(item);
+            h.update(BUF8);
+        }
+        for (let i of [passwordBytes, saltBytes, key, personalization]) {
+            BUF[0] = swap8IfBE(i.length); // BUF is u32 array, this is valid once normalized to LE bytes
+            h.update(BUF8).update(i);
+        }
+        // Reserve two extra LE32 words after the 64-byte `H_0` so Figures 3-4 can append
+        // `LE32(0 or 1) || LE32(i)` in place for the lane-starting blocks.
+        H0 = new Uint32Array(18);
+        h.digestInto(u8(H0));
+        succeeded = true;
+        return { H0, p, dkLen, m, t, version, maxmem, onProgress, asyncTick };
     }
-    for (let i of [password, salt, key, personalization]) {
-        BUF[0] = swap8IfBE(i.length); // BUF is u32 array, this is valid once normalized to LE bytes
-        h.update(BUF8).update(i);
+    finally {
+        // digestInto() does not destroy BLAKE2 state. It and all string-derived inputs contain secrets.
+        if (h)
+            h.destroy();
+        clean(BUF, ...ownedInputs);
+        if (!succeeded && H0)
+            clean(H0);
     }
-    // Reserve two extra LE32 words after the 64-byte `H_0` so Figures 3-4 can append
-    // `LE32(0 or 1) || LE32(i)` in place for the lane-starting blocks.
-    const H0 = new Uint32Array(18);
-    const H0_8 = u8(H0);
-    h.digestInto(H0_8);
+}
+function argon2Init(password, salt, type, opts) {
+    const { H0, p, dkLen, m, t, version, maxmem, onProgress, asyncTick } = argon2InitialHash(password, salt, type, opts);
     // 256 u32 = 1024 (BLOCK_SIZE), fills A2_BUF on processing
-    // Params
-    const lanes = p;
-    // m' = 4 * p * floor (m / 4p)
-    const mP = 4 * p * Math.floor(m / (ARGON2_SYNC_POINTS * p));
-    //q = m' / p columns
-    const laneLen = Math.floor(mP / p);
-    const segmentLen = Math.floor(laneLen / ARGON2_SYNC_POINTS);
-    // `maxmem` is documented in bytes; compare against the actual 1024-byte block allocation.
-    const memUsed = mP * 1024;
-    if (!isU32(maxmem))
-        throw new Error('"maxmem" expected <2**32, got ' + maxmem);
-    if (memUsed > maxmem)
-        throw new Error('"maxmem" limit was hit: memUsed(mP*1024)=' + memUsed + ', maxmem=' + maxmem);
-    const B = new Uint32Array(memUsed / 4);
-    // Fill first blocks
-    for (let l = 0; l < p; l++) {
-        const i = 256 * laneLen * l;
-        // B[i][0] = H'^(1024)(H_0 || LE32(0) || LE32(i))
-        H0[17] = swap8IfBE(l);
-        H0[16] = swap8IfBE(0);
-        B.set(swap32IfBE(u32(Hp(H0, 1024))), i);
-        // B[i][1] = H'^(1024)(H_0 || LE32(1) || LE32(i))
-        H0[16] = swap8IfBE(1);
-        B.set(swap32IfBE(u32(Hp(H0, 1024))), i + 256);
+    try {
+        // Params
+        const lanes = p;
+        // m' = 4 * p * floor (m / 4p)
+        const mP = 4 * p * Math.floor(m / (ARGON2_SYNC_POINTS * p));
+        //q = m' / p columns
+        const laneLen = Math.floor(mP / p);
+        const segmentLen = Math.floor(laneLen / ARGON2_SYNC_POINTS);
+        // `maxmem` is documented in bytes; compare against the actual 1024-byte block allocation.
+        const memUsed = mP * 1024;
+        if (!isU32(maxmem))
+            throw new Error('"maxmem" expected <2**32, got ' + maxmem);
+        if (memUsed > maxmem)
+            throw new Error('"maxmem" limit was hit: memUsed(mP*1024)=' + memUsed + ', maxmem=' + maxmem);
+        const B = new Uint32Array(memUsed / 4);
+        // Fill first blocks
+        for (let l = 0; l < p; l++) {
+            const i = 256 * laneLen * l;
+            // B[i][0] = H'^(1024)(H_0 || LE32(0) || LE32(i))
+            H0[17] = swap8IfBE(l);
+            H0[16] = swap8IfBE(0);
+            B.set(swap32IfBE(u32(Hp(H0, 1024))), i);
+            // B[i][1] = H'^(1024)(H_0 || LE32(1) || LE32(i))
+            H0[16] = swap8IfBE(1);
+            B.set(swap32IfBE(u32(Hp(H0, 1024))), i + 256);
+        }
+        let perBlock = () => { };
+        if (onProgress) {
+            // The first segment of the first pass skips two preinitialized blocks per lane.
+            const totalBlock = t * ARGON2_SYNC_POINTS * p * segmentLen - 2 * p;
+            // Invoke callback if progress changes from 10.01 to 10.02
+            // Allows to draw smooth progress bar on up to 8K screen
+            const callbackPer = Math.max(Math.floor(totalBlock / 10000), 1);
+            let blockCnt = 0;
+            perBlock = () => {
+                blockCnt++;
+                if (onProgress && (!(blockCnt % callbackPer) || blockCnt === totalBlock))
+                    onProgress(blockCnt / totalBlock);
+            };
+        }
+        return { type, mP, p, t, version, B, laneLen, lanes, segmentLen, dkLen, perBlock, asyncTick };
     }
-    let perBlock = () => { };
-    if (onProgress) {
-        // The first segment of the first pass skips two preinitialized blocks per lane.
-        const totalBlock = t * ARGON2_SYNC_POINTS * p * segmentLen - 2 * p;
-        // Invoke callback if progress changes from 10.01 to 10.02
-        // Allows to draw smooth progress bar on up to 8K screen
-        const callbackPer = Math.max(Math.floor(totalBlock / 10000), 1);
-        let blockCnt = 0;
-        perBlock = () => {
-            blockCnt++;
-            if (onProgress && (!(blockCnt % callbackPer) || blockCnt === totalBlock))
-                onProgress(blockCnt / totalBlock);
-        };
+    finally {
+        clean(H0);
     }
-    clean(BUF, H0);
-    return { type, mP, p, t, version, B, laneLen, lanes, segmentLen, dkLen, perBlock, asyncTick };
 }
 function argon2Output(B, p, laneLen, dkLen) {
     const B_final = new Uint32Array(256);
@@ -338,10 +362,9 @@ function argon2Output(B, p, laneLen, dkLen) {
  * processed block so callers control pacing: the sync driver just drains the
  * generator, while the async driver awaits `nextTick()` between time slices.
  */
-function* argon2Blocks(ctx) {
+function* argon2Blocks(ctx, address) {
     const { type, mP, p, t, version, B, laneLen, lanes, segmentLen, perBlock } = ctx;
     // [address, input, zero_block] format so we can pass single U32 to block function
-    const address = new Uint32Array(3 * 256);
     address[256 + 6] = mP;
     address[256 + 8] = t;
     address[256 + 10] = type;
@@ -408,7 +431,7 @@ function* argon2Blocks(ctx) {
 }
 function argon2(type, password, salt, opts) {
     const ctx = argon2Init(password, salt, type, opts);
-    const blocks = argon2Blocks(ctx);
+    const blocks = argon2Blocks(ctx, new Uint32Array(3 * 256));
     while (!blocks.next().done) { }
     return argon2Output(ctx.B, ctx.p, ctx.laneLen, ctx.dkLen);
 }
@@ -444,7 +467,7 @@ function argon2(type, password, salt, opts) {
  * });
  * ```
  */
-export const argon2d = (password, salt, opts) => argon2(AT.Argon2d, password, salt, opts);
+export const argon2d = (password, salt, opts = {}) => argon2(AT.Argon2d, password, salt, opts);
 /**
  * Argon2i side-channel-resistant version.
  * @param password - password or input key material
@@ -458,7 +481,7 @@ export const argon2d = (password, salt, opts) => argon2(AT.Argon2d, password, sa
  * argon2i('password', 'salt1234', { t: 1, m: 8, p: 1, dkLen: 32 });
  * ```
  */
-export const argon2i = (password, salt, opts) => argon2(AT.Argon2i, password, salt, opts);
+export const argon2i = (password, salt, opts = {}) => argon2(AT.Argon2i, password, salt, opts);
 /**
  * Argon2id, combining i+d, the most popular version from RFC 9106.
  * @param password - password or input key material
@@ -472,10 +495,13 @@ export const argon2i = (password, salt, opts) => argon2(AT.Argon2i, password, sa
  * argon2id('password', 'salt1234', { t: 1, m: 8, p: 1, dkLen: 32 });
  * ```
  */
-export const argon2id = (password, salt, opts) => argon2(AT.Argon2id, password, salt, opts);
+export const argon2id = (password, salt, opts = {}) => argon2(AT.Argon2id, password, salt, opts);
 async function argon2Async(type, password, salt, opts) {
     const ctx = argon2Init(password, salt, type, opts);
-    const blocks = argon2Blocks(ctx);
+    // Keep the generator-local address block reachable so an aborted scheduler yield can wipe it.
+    const address = new Uint32Array(3 * 256);
+    const blocks = argon2Blocks(ctx, address);
+    const abort = () => clean(address, ctx.B);
     let ts = Date.now();
     while (!blocks.next().done) {
         // Date.now() is not monotonic. If the clock goes backwards,
@@ -483,8 +509,9 @@ async function argon2Async(type, password, salt, opts) {
         const diff = Date.now() - ts;
         if (diff >= 0 && diff < ctx.asyncTick)
             continue;
-        await nextTick();
-        ts += diff;
+        await nextTick(abort);
+        // Scheduler delay is outside the synchronous work budget.
+        ts = Date.now();
     }
     return argon2Output(ctx.B, ctx.p, ctx.laneLen, ctx.dkLen);
 }
@@ -519,7 +546,7 @@ async function argon2Async(type, password, salt, opts) {
  * });
  * ```
  */
-export const argon2dAsync = (password, salt, opts) => argon2Async(AT.Argon2d, password, salt, opts);
+export const argon2dAsync = (password, salt, opts = {}) => argon2Async(AT.Argon2d, password, salt, opts);
 /**
  * Argon2i async side-channel-resistant version.
  * @param password - password or input key material
@@ -533,7 +560,7 @@ export const argon2dAsync = (password, salt, opts) => argon2Async(AT.Argon2d, pa
  * await argon2iAsync('password', 'salt1234', { t: 1, m: 8, p: 1, dkLen: 32 });
  * ```
  */
-export const argon2iAsync = (password, salt, opts) => argon2Async(AT.Argon2i, password, salt, opts);
+export const argon2iAsync = (password, salt, opts = {}) => argon2Async(AT.Argon2i, password, salt, opts);
 /**
  * Argon2id async, combining i+d, the most popular version from RFC 9106.
  * @param password - password or input key material
@@ -547,4 +574,4 @@ export const argon2iAsync = (password, salt, opts) => argon2Async(AT.Argon2i, pa
  * await argon2idAsync('password', 'salt1234', { t: 1, m: 8, p: 1, dkLen: 32 });
  * ```
  */
-export const argon2idAsync = (password, salt, opts) => argon2Async(AT.Argon2id, password, salt, opts);
+export const argon2idAsync = (password, salt, opts = {}) => argon2Async(AT.Argon2id, password, salt, opts);

@@ -29,8 +29,6 @@ import * as u64 from "./_u64.js";
 import { abytes, aexists, aoutput, checkOpts, clean, createHasher, createView } from "./utils.js";
 // Shared unsalted sentinel, sized for the 64-bit path and reused by the 32-bit path via prefix.
 const EMPTY_SALT = /* @__PURE__ */ new Uint32Array(8);
-// Base destroy logic only clears salt-derived state; the partial message buffer and length/position
-// bookkeeping remain until the instance or backing buffer is reused.
 class BLAKE1 {
     canXOF = false;
     finished = false;
@@ -107,6 +105,9 @@ class BLAKE1 {
     }
     destroy() {
         this.destroyed = true;
+        clean(this.buffer);
+        this.length = 0;
+        this.pos = 0;
         if (this.salt !== EMPTY_SALT) {
             clean(this.salt, this.constants);
         }

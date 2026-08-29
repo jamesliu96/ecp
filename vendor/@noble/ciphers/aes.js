@@ -1291,6 +1291,7 @@ class _AesCtrDRBG {
     nonce;
     state;
     reseedCnt;
+    destroyed = false;
     constructor(keyLen, seed, personalization) {
         this.blockLen = ctr.blockSize;
         const keyLenBytes = keyLen / 8;
@@ -1323,6 +1324,8 @@ class _AesCtrDRBG {
     // Optional `info` is additional input XORed into the reseed block and is
     // limited to the internal state width.
     addEntropy(seed, info) {
+        if (this.destroyed)
+            throw new Error('cannot use destroyed DRBG');
         abytes(seed, this.state.length, 'seed');
         // Copy caller entropy before XORing in personalization/additional input,
         // then wipe the mixed seed material after CTR_DRBG_Update consumes it.
@@ -1342,6 +1345,8 @@ class _AesCtrDRBG {
     // SP 800-90A Rev. 1 CTR_DRBG without a derivation function limits
     // additional_input to seedlen, which is exactly this internal state width.
     randomBytes(len, info) {
+        if (this.destroyed)
+            throw new Error('cannot use destroyed DRBG');
         anumber(len);
         // SP 800-90A Table 3 caps AES CTR_DRBG requests at 2^16 bits = 65536 bytes.
         if (len > 2 ** 16)
@@ -1362,13 +1367,15 @@ class _AesCtrDRBG {
         this.reseedCnt++;
         return res;
     }
-    // Zeroes the current state and resets the counter, but does not make the
-    // instance unusable: later calls continue from the zeroed state.
+    // Zeroes the current state and marks the instance destroyed. Fails closed:
+    // any later randomBytes()/addEntropy() throws instead of continuing from the
+    // zeroed state (which would make subsequent output the predictable zero-key stream).
     clean() {
         // `key` and `nonce` alias this backing buffer, so one fill wipes the full
         // secret state in place.
         this.state.fill(0);
         this.reseedCnt = 0;
+        this.destroyed = true;
     }
 }
 // Internal helper for the exported 128-bit and 256-bit aliases; other key

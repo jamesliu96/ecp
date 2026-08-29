@@ -79,7 +79,7 @@ import {
 - [ML-DSA / Dilithium](#ml-dsa--dilithium-signatures)
 - [SLH-DSA / SPHINCS+](#slh-dsa--sphincs-signatures)
 - [Falcon](#falcon-signatures)
-- [hybrid: XWing, KitchenSink and others](#hybrid-xwing-kitchensink-and-others)
+- [hybrid: X-Wing, KitchenSink and others](#hybrid-x-wing-kitchensink-and-others)
 - [What should I use?](#what-should-i-use)
 - [Security](#security)
 - [Contributing & testing](#contributing--testing)
@@ -123,6 +123,25 @@ Old, incompatible version (Kyber) is not provided. Open an issue if you need it.
 > `decapsulate` will simply return a different shared secret.
 > ML-KEM is also probabilistic and relies on quality of CSPRNG.
 
+#### webcrypto: friendly wrapper
+
+WebCrypto-backed ML-KEM and `ml_kem768_x25519` wrappers are also available. Their methods are async
+and require a runtime that implements the corresponding experimental WebCrypto API.
+
+```ts
+import { ml_kem768 } from '@noble/post-quantum/webcrypto.js';
+
+if (await ml_kem768.isSupported()) {
+  const aliceKeys = await ml_kem768.keygen();
+  const { cipherText, sharedSecret: bobShared } = await ml_kem768.encapsulate(aliceKeys.publicKey);
+  const aliceShared = await ml_kem768.decapsulate(cipherText, aliceKeys.secretKey);
+}
+```
+
+The ML-KEM wrappers serialize private keys as 64-byte `raw-seed` values; the X25519 hybrid uses a
+32-byte seed. They can be passed to the corresponding synchronous implementation's `keygen(seed)`,
+but are not expanded decapsulation keys.
+
 ### ML-DSA / Dilithium signatures
 
 ```ts
@@ -157,8 +176,16 @@ const isValidPre = hml.verify(sigPre, msg, keys.publicKey);
 - `context`: domain-separation byte string, up to 255 bytes; must match between `sign` and `verify`
 - `extraEntropy`: hedged-signing randomness. Default is 32 random bytes;
   `false` produces deterministic signatures; custom 32-byte value is also allowed
-- `externalMu`: treat `msg` as the precomputed 64-byte message representative µ
 - `prehash(hash)`: pre-hash variant (HashML-DSA) from FIPS-204
+
+Unknown option keys are rejected rather than ignored, so a misspelling such as
+`{ ctx }` fails loudly instead of silently signing with no domain separation.
+
+`externalMu`, which treats `msg` as the precomputed 64-byte message representative
+µ, is available on `ml_dsa*.internal.sign` / `internal.verify` only. The public
+wrappers reject it: `sign` formats `M'` before the 64-byte check so it could never
+accept a µ, and `verify` did not forward it, returning `false` for a valid
+external-mu signature.
 
 ### SLH-DSA / SPHINCS+ signatures
 
@@ -218,7 +245,27 @@ Lattice-based digital signature algorithm, submitted to NIST PQC Round 3 ([websi
 - `falcon512padded`, `falcon1024padded`: fixed-length detached signatures
 - `attached.seal(...)` / `attached.open(...)`: attached-signature API for Round 3 vectors and interop
 
-### hybrid: XWing, KitchenSink and others
+> [!WARNING]
+> Falcon signing is randomized by design. Leave signing options unset in production so every
+> signature receives a fresh 40-byte public nonce and a fresh 48-byte sampler seed from the system
+> CSPRNG. Falcon's `extraEntropy` option does not have the hedged semantics used by ML-DSA and
+> SLH-DSA:
+>
+> - `extraEntropy: false` seeds an AES-CTR-DRBG with 48 zero bytes. It makes signatures
+>   deterministic for a fixed key and message, and reuses the same nonce and initial random stream
+>   across different messages. This is outside the Falcon Round 3 randomized-hash design.
+> - A 48-byte `extraEntropy` value replaces system randomness; it is not mixed with fresh entropy.
+>   Reusing a value therefore reuses the signing stream.
+> - The raw `random` callback overrides `extraEntropy` and supplies both the nonce and sampler seed.
+>   It exists for test-vector reproduction and should not be used as a production randomness hook.
+>
+> In particular, do not copy ML-DSA examples that use `extraEntropy: false` into Falcon code.
+
+`attached.open(...)` throws when verification fails and returns a fresh copy of the embedded
+message when it succeeds. The result does not alias the attached signature or public-key buffers.
+Detached `verify(...)` returns `false` for an invalid signature.
+
+### hybrid: X-Wing, KitchenSink and others
 
 ```js
 import {
@@ -230,19 +277,32 @@ import {
 
 The hybrid submodule combines post-quantum algorithms with elliptic curve cryptography:
 
-- `ml_kem768_x25519`: ML-KEM-768 + X25519 (CG Framework, same as XWing)
-- `ml_kem768_p256`: ML-KEM-768 + P-256 (CG Framework)
-- `ml_kem1024_p384`: ML-KEM-1024 + P-384 (CG Framework)
+- `ml_kem768_x25519`: ML-KEM-768 + X25519, implementing X-Wing under the descriptive
+  `ml_kem768_x25519` export name. There is no separate `XWing` alias.
+- `ml_kem768_p256`: ML-KEM-768 + P-256 using the current CG framework construction
+- `ml_kem1024_p384`: ML-KEM-1024 + P-384 using the current CG framework construction
 - `KitchenSink_ml_kem768_x25519`: ML-KEM-768 + X25519 with HKDF-SHA256 combiner
-- `QSF_ml_kem768_p256`: ML-KEM-768 + P-256 (QSF construction)
-- `QSF_ml_kem1024_p384`: ML-KEM-1024 + P-384 (QSF construction)
+- `QSF_ml_kem768_p256`, `QSF_ml_kem1024_p384`: legacy compatibility presets for the older
+  QSF/C2PRI naming and labels. New code should use `ml_kem768_p256` and `ml_kem1024_p384`.
 
-The following spec drafts are matched:
+> **Security note:** `_ecdhKem(curve)` is an internal raw-ECDH component adapter, not a standalone
+> IND-CCA-secure KEM. It has no KDF and does not bind the encapsulation or recipient public key, so
+> different accepted point encodings can derive the same bytes. Use it only within a specified
+> combiner that performs that binding, or use a standardized DHKEM. The built-in hybrid presets
+> retain their specified combiners and test-vector-compatible behavior.
 
-- [irtf-cfrg-hybrid-kems-07](https://datatracker.ietf.org/doc/draft-irtf-cfrg-hybrid-kems/)
-- [irtf-cfrg-concrete-hybrid-kems-02](https://datatracker.ietf.org/doc/draft-irtf-cfrg-concrete-hybrid-kems/)
-- [connolly-cfrg-xwing-kem-09](https://datatracker.ietf.org/doc/draft-connolly-cfrg-xwing-kem/)
-- [tls-westerbaan-xyber768d00-03](https://datatracker.ietf.org/doc/draft-tls-westerbaan-xyber768d00/)
+The current `ml_kem*` presets are tested against these work-in-progress specifications:
+
+- [irtf-cfrg-hybrid-kems-12](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-hybrid-kems-12)
+- [irtf-cfrg-concrete-hybrid-kems-03](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-concrete-hybrid-kems-03)
+- [connolly-cfrg-xwing-kem-10](https://datatracker.ietf.org/doc/html/draft-connolly-cfrg-xwing-kem-10)
+
+`QSF(...)` is the legacy API name for the construction now called the C2PRI combiner. It derives
+the final secret from `ssPQ || ssT || ctT || ekT || label`; omitting the PQ ciphertext and
+encapsulation key is intentional and relies on the PQ KEM's C2PRI property. The `QSF_*` presets
+retain older draft labels and vectors for compatibility, so they do not implement the current
+concrete preset encodings. They are also unrelated to the separate universal-combiner example in
+NIST SP 800-227.
 
 ### What should I use?
 
@@ -282,9 +342,23 @@ If you see anything unusual: investigate and report.
 
 ### Constant-timeness
 
-There is no protection against side-channel attacks.
-We actively research how to provide this property for post-quantum algorithms in JS.
-Keep in mind that even hardware versions ML-KEM [are vulnerable](https://eprint.iacr.org/2023/1084).
+This pure JavaScript implementation does not claim constant-time execution. JavaScript engines,
+JIT compilers, garbage collection, floating-point operations and `bigint` arithmetic do not offer
+the execution guarantees needed for a formal constant-time claim.
+
+- ML-DSA signing uses rejection loops, early-exit norm checks and conditional arithmetic whose
+  execution depends on secret-key and per-signature state. Fresh randomized signing is the default,
+  but it does not turn the implementation into a constant-time one.
+- Falcon signing uses data-dependent Gaussian and rejection sampling, floating-point operations,
+  and `bigint` paths. Its timing and microarchitectural side-channel posture is materially weaker
+  than a hardened native implementation. Deterministic or repeated signing randomness can make
+  observations easier to correlate and should be avoided.
+- These limitations matter most when an attacker can measure signing closely, such as hostile
+  co-tenancy, shared hardware, or a high-resolution local timing oracle. Use an isolated execution
+  environment or a reviewed native/constant-time backend when that is part of the threat model.
+
+We actively research how to improve this property for post-quantum algorithms in JS. Even hardware
+ML-KEM implementations require careful side-channel engineering and [have had practical attacks](https://eprint.iacr.org/2023/1084).
 
 ### Supply chain security
 

@@ -22,7 +22,7 @@ export type FalconAttached = CryptoKeys & {
      * @param sig Attached Falcon signature bytes.
      * @param publicKey Falcon public key bytes.
      * @param opts Optional verification options.
-     * @returns Embedded message bytes when the signature is valid.
+     * @returns Fresh message bytes that do not alias either input when the signature is valid.
      */
     open(sig: Uint8Array, publicKey: Uint8Array, opts?: VerOpts): Uint8Array;
 };

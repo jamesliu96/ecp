@@ -84,6 +84,12 @@ type CurveSign = ECDSA | EdDSA;
 /**
  * Wraps an ECDH-capable curve as a KEM.
  * Shared secrets stay in the wrapped curve's raw ECDH byte format with no built-in KDF.
+ *
+ * SECURITY: this is a low-level component adapter, not a standalone IND-CCA-secure KEM. It does
+ * not bind the encapsulation or recipient public key into the secret, so distinct accepted point
+ * encodings can produce the same output. Use it only inside a construction whose specified
+ * combiner binds those values, or use a standardized DHKEM with labeled extract-and-expand.
+ *
  * On SEC 1 / Weierstrass curves, that means the compressed shared-point body without the
  * 1-byte `0x02` / `0x03` prefix.
  * The X25519 path also leaves RFC 7748's optional all-zero shared-secret check to callers.
@@ -99,12 +105,12 @@ type CurveSign = ECDSA | EdDSA;
  * Wrap an ECDH-capable curve as a generic KEM.
  * ```ts
  * import { x25519 } from '@noble/curves/ed25519.js';
- * import { ecdhKem } from '@noble/post-quantum/hybrid.js';
- * const kem = ecdhKem(x25519);
+ * import { _ecdhKem } from '@noble/post-quantum/hybrid.js';
+ * const kem = _ecdhKem(x25519);
  * const publicKeyLen = kem.lengths.publicKey;
  * ```
  */
-export declare function ecdhKem(curve: CurveECDH, allowZeroKey?: boolean): TRet<KEM>;
+export declare function _ecdhKem(curve: CurveECDH, allowZeroKey?: boolean): TRet<KEM>;
 /**
  * Wraps a curve signer as a generic `Signer`.
  * Signatures stay in the wrapped curve's native byte encoding.
@@ -151,12 +157,18 @@ export declare function expandSeedXof(xof: TArg<XOF>): TRet<ExpandSeed>;
 export type Combiner = (publicKeys: TArg<Uint8Array[]>, cipherTexts: TArg<Uint8Array[]>, sharedSecrets: TArg<Uint8Array[]>) => TRet<Uint8Array>;
 /**
  * Combines multiple KEMs into one composite KEM.
- * @param realSeedLen - Input seed length expected by `expandSeed`.
- * @param realMsgLen - Shared-secret length returned by `combiner`.
+ * @param realSeedLen - Positive input seed length expected by `expandSeed`, or `undefined` to use
+ * the sum of component seed lengths. Callers remain responsible for choosing a security-appropriate
+ * size.
+ * @param realMsgLen - Positive shared-secret length returned by `combiner`, or `undefined` to use
+ * the sum of component message lengths.
  * @param expandSeed - Seed expander used to derive per-KEM seeds.
  * @param combiner - Combines the per-KEM outputs into one shared secret.
- * @param kems - KEM implementations to combine.
+ * @param kems - At least one KEM implementation. A construction advertised as hybrid normally
+ * supplies two or more.
  * @returns Composite KEM.
+ * @throws On wrong argument types. {@link TypeError}
+ * @throws If there are no components or any required length resolves to zero. {@link RangeError}
  * @example
  * Combine multiple KEMs into one composite KEM.
  * ```ts
@@ -179,10 +191,15 @@ realMsgLen: number | undefined, // how much bytes combiner returns
 expandSeed: TArg<ExpandSeed>, combiner: TArg<Combiner>, ...kems: TArg<KEM[]>): TRet<KEM>;
 /**
  * Combines multiple signers into one composite signer.
- * @param realSeedLen - Input seed length expected by `expandSeed`.
+ * @param realSeedLen - Positive input seed length expected by `expandSeed`, or `undefined` to use
+ * the sum of component seed lengths. Callers remain responsible for choosing a security-appropriate
+ * size.
  * @param expandSeed - Seed expander used to derive per-signer seeds.
- * @param signers - Signers to combine.
+ * @param signers - At least one signer. A construction advertised as hybrid normally supplies two
+ * or more.
  * @returns Composite signer.
+ * @throws On wrong argument types. {@link TypeError}
+ * @throws If there are no components or any required length resolves to zero. {@link RangeError}
  * @example
  * Combine multiple signers into one composite signer.
  * ```ts
@@ -211,14 +228,16 @@ export declare function combineSigners(realSeedLen: number | undefined, expandSe
  * @param xof - XOF used for seed expansion.
  * @param kdf - Hash used for the final combiner.
  * @returns Hybrid KEM.
+ * @throws On wrong argument types. {@link TypeError}
+ * @throws On wrong argument ranges or values. {@link RangeError}
  * @example
  * Build a QSF hybrid KEM preset from a PQ KEM and an elliptic-curve KEM.
  * ```ts
  * import { p256 } from '@noble/curves/nist.js';
  * import { sha3_256, shake256 } from '@noble/hashes/sha3.js';
- * import { QSF, ecdhKem } from '@noble/post-quantum/hybrid.js';
+ * import { QSF, _ecdhKem } from '@noble/post-quantum/hybrid.js';
  * import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
- * const kem = QSF('example', ml_kem768, ecdhKem(p256, true), shake256, sha3_256);
+ * const kem = QSF('example', ml_kem768, _ecdhKem(p256, true), shake256, sha3_256);
  * const publicKeyLen = kem.lengths.publicKey;
  * ```
  */
@@ -241,15 +260,17 @@ export declare const QSF_ml_kem1024_p384: TRet<KEM>;
  * @param xof - XOF used for seed expansion.
  * @param hash - Hash used for HKDF extraction and expansion.
  * @returns Hybrid KEM.
+ * @throws On wrong argument types. {@link TypeError}
+ * @throws On wrong argument ranges or values. {@link RangeError}
  * @example
  * Build the "KitchenSink" hybrid KEM combiner.
  * ```ts
  * import { sha256 } from '@noble/hashes/sha2.js';
  * import { shake256 } from '@noble/hashes/sha3.js';
- * import { createKitchenSink, ecdhKem } from '@noble/post-quantum/hybrid.js';
+ * import { createKitchenSink, _ecdhKem } from '@noble/post-quantum/hybrid.js';
  * import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
  * import { x25519 } from '@noble/curves/ed25519.js';
- * const kem = createKitchenSink('example', ml_kem768, ecdhKem(x25519), shake256, sha256);
+ * const kem = createKitchenSink('example', ml_kem768, _ecdhKem(x25519), shake256, sha256);
  * const publicKeyLen = kem.lengths.publicKey;
  * ```
  */

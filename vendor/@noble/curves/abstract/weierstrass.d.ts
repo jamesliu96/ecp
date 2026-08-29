@@ -201,7 +201,13 @@ export type WeierstrassExtraOpts<T> = Partial<{
     Fp: IField<T>;
     /** Optional scalar-field override. */
     Fn: IField<bigint>;
-    /** Whether the point constructor accepts infinity points. */
+    /**
+     * Whether the point at infinity is a public value of this point type. When unset, infinity
+     * fails `assertValidity()` and has no byte encoding at all: encoding throws and `0x00` does
+     * not decode, which keeps `Point.fromBytes()` usable as a strict key boundary because
+     * infinity cannot be expressed in bytes. When set, infinity validates and uses the SEC 1
+     * v2.0 §2.3.3 / §2.3.4 single-octet `0x00` form, unless `fromBytes` / `toBytes` override it.
+     */
     allowInfinityPoint: boolean;
     /** Optional GLV endomorphism data. */
     endo: EndomorphismOpts;

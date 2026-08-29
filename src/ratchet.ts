@@ -42,9 +42,9 @@ export async function CreateInit(contactFp: string, plaintextStr: string) {
   const peerPubBytes = decodeBase64URL(contact.bundle);
   const peerId = parseIdentityPublic(peerPubBytes);
 
-  const ekKP = keygenX25519();
-  const kemRes = encapsulateMLKEM1024(peerId.pqPk);
-  const dh1 = getSharedSecretX25519(ekKP.secretKey, peerId.dhPk);
+  const ekKP = await keygenX25519();
+  const kemRes = await encapsulateMLKEM1024(peerId.kemPk);
+  const dh1 = await getSharedSecretX25519(ekKP.secretKey, peerId.dhPk);
 
   const SK = await hkdfSHA256(
     concatBytes(
@@ -64,7 +64,7 @@ export async function CreateInit(contactFp: string, plaintextStr: string) {
     ekKP.publicKey,
     kemRes.cipherText,
   );
-  const sig = signMLDSA87(sigInput, local.dsaSk);
+  const sig = await signMLDSA87(sigInput, local.dsaSk);
 
   const MK0 = await hkdfSHA256(
     SK,
@@ -173,7 +173,7 @@ export async function ProcessInit(packetBytes: Uint8Array) {
     ekPubBytes,
     kemCt,
   );
-  if (!verifyMLDSA87(sig, sigInput, senderId.signPk))
+  if (!(await verifyMLDSA87(sig, sigInput, senderId.dsaPk)))
     throw new Error('INIT signature rejected');
 
   let contact = await DB.get<PeerContact>('contacts', senderFp);
@@ -189,12 +189,12 @@ export async function ProcessInit(packetBytes: Uint8Array) {
     await DB.put('contacts', contact);
   }
 
-  const dh1 = getSharedSecretX25519(local.dhSk, ekPubBytes);
+  const dh1 = await getSharedSecretX25519(local.dhSk, ekPubBytes);
   const SK = await hkdfSHA256(
     concatBytes(
       new TextEncoder().encode('ECP-INIT-v1'),
       dh1,
-      decapsulateMLKEM1024(kemCt, local.kemSk),
+      await decapsulateMLKEM1024(kemCt, local.kemSk),
     ),
     new Uint8Array(32),
     new TextEncoder().encode(''),
@@ -240,9 +240,9 @@ export async function ProcessInit(packetBytes: Uint8Array) {
     new TextEncoder().encode('ECP-DR-ROOT-v1'),
     32,
   );
-  const dhsKP = keygenX25519();
+  const dhsKP = await keygenX25519();
   const dhsPubBytes = dhsKP.publicKey;
-  const dh2 = getSharedSecretX25519(dhsKP.secretKey, ekPubBytes);
+  const dh2 = await getSharedSecretX25519(dhsKP.secretKey, ekPubBytes);
   const drIkm = await hkdfSHA256(
     dh2,
     RK0,
@@ -346,7 +346,7 @@ export async function ProcessResp(packetBytes: Uint8Array) {
     rKey.fill(0);
   }
 
-  const dh2 = getSharedSecretX25519(session.DHs.sk, rPubBytes);
+  const dh2 = await getSharedSecretX25519(session.DHs.sk, rPubBytes);
   const drIkm = await hkdfSHA256(
     dh2,
     session.RK,
@@ -372,7 +372,7 @@ export async function ProcessResp(packetBytes: Uint8Array) {
 
 export async function stepDH(s: ChannelSession, rPubBytes?: Uint8Array) {
   if (rPubBytes) {
-    const dh = getSharedSecretX25519(s.DHs.sk, rPubBytes);
+    const dh = await getSharedSecretX25519(s.DHs.sk, rPubBytes);
     const drIkm = await hkdfSHA256(
       dh,
       s.RK,
@@ -385,10 +385,10 @@ export async function stepDH(s: ChannelSession, rPubBytes?: Uint8Array) {
     s.DHr = { pk: rPubBytes };
     oldRK.fill(0);
   }
-  const nkp = keygenX25519();
+  const nkp = await keygenX25519();
   if (!s.DHr) throw new Error('Cannot step DH: Remote DH key (DHr) is missing');
 
-  const dh2 = getSharedSecretX25519(nkp.secretKey, s.DHr.pk);
+  const dh2 = await getSharedSecretX25519(nkp.secretKey, s.DHr.pk);
   const drIkm2 = await hkdfSHA256(
     dh2,
     s.RK,

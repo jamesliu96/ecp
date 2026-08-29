@@ -38,7 +38,7 @@ See {@link https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-xchacha#appendi
 
  * @module
  */
-import { abool, abytes, anumber, checkOpts, clean, copyBytes, getOutput, isAligned32, isLE, randomBytes, swap32IfBE, u32, } from "./utils.js";
+import { abool, abytes, anumber, checkOpts, clean, complexOverlapBytes, copyBytes, getOutput, isAligned32, isLE, randomBytes, swap32IfBE, u32, } from "./utils.js";
 // Replaces `TextEncoder` for ASCII literals, which is enough for sigma constants.
 // Non-ASCII input would not match UTF-8 `TextEncoder` output.
 const encodeStr = (str) => Uint8Array.from(str.split(''), (c) => c.charCodeAt(0));
@@ -157,7 +157,10 @@ export function createCipher(core, opts) {
         const len = data.length;
         // Raw XorStream APIs return ciphertext/plaintext bytes directly, so caller-provided outputs
         // must match the logical result length exactly instead of returning an oversized workspace.
+        const hasOutput = output !== undefined;
         output = getOutput(len, output, false);
+        if (hasOutput)
+            complexOverlapBytes(data, output);
         anumber(counter);
         // See MAX_COUNTER policy note above: reject advanced explicit-counter requests before any wrap.
         if (counter < 0 || counter >= MAX_COUNTER)
@@ -251,6 +254,7 @@ export class _XorStreamPRG {
     pos;
     ctr;
     cipher;
+    destroyed = false;
     constructor(cipher, blockLen, keyLen, nonceLen, seed) {
         this.cipher = cipher;
         this.blockLen = blockLen;
@@ -278,6 +282,8 @@ export class _XorStreamPRG {
         this.pos = this.blockLen;
     }
     addEntropy(seed) {
+        if (this.destroyed)
+            throw new Error('cannot use destroyed PRG');
         // Reject empty entropy before re-keying, otherwise a throwing call would still advance state.
         abytes(seed, undefined, 'seed');
         if (seed.length === 0)
@@ -288,6 +294,8 @@ export class _XorStreamPRG {
         this.reseed(seed);
     }
     randomBytes(len) {
+        if (this.destroyed)
+            throw new Error('cannot use destroyed PRG');
         anumber(len);
         if (len === 0)
             return new Uint8Array(0);
@@ -332,16 +340,19 @@ export class _XorStreamPRG {
     }
     // Clone seeds the new instance from this stream, so the source PRG advances too.
     clone() {
+        if (this.destroyed)
+            throw new Error('cannot use destroyed PRG');
         return new _XorStreamPRG(this.cipher, this.blockLen, this.keyLen, this.nonceLen, this.randomBytes(this.state.length));
     }
-    // Zeroes the current state and leftover buffer, but does not make the instance unusable:
-    // Later reads first drain zeros from the cleared buffer and then continue
-    // from zero key||nonce state.
+    // Zeroes the current state, leftover buffer, and marks the instance destroyed.
+    // The instance fails closed: any later randomBytes()/addEntropy()/clone() throws instead
+    // of silently continuing from zero key||nonce state (which would yield predictable output).
     clean() {
         this.pos = 0;
         this.ctr = 0;
         this.buf.fill(0);
         this.state.fill(0);
+        this.destroyed = true;
     }
 }
 /**

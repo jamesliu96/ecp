@@ -330,7 +330,13 @@ export type WeierstrassExtraOpts<T> = Partial<{
   Fp: IField<T>;
   /** Optional scalar-field override. */
   Fn: IField<bigint>;
-  /** Whether the point constructor accepts infinity points. */
+  /**
+   * Whether the point at infinity is a public value of this point type. When unset, infinity
+   * fails `assertValidity()` and has no byte encoding at all: encoding throws and `0x00` does
+   * not decode, which keeps `Point.fromBytes()` usable as a strict key boundary because
+   * infinity cannot be expressed in bytes. When set, infinity validates and uses the SEC 1
+   * v2.0 §2.3.3 / §2.3.4 single-octet `0x00` form, unless `fromBytes` / `toBytes` override it.
+   */
   allowInfinityPoint: boolean;
   /** Optional GLV endomorphism data. */
   endo: EndomorphismOpts;
@@ -515,15 +521,28 @@ export function weierstrass<T>(
     }
   );
 
-  // Snapshot constructor-time flags whose later mutation would otherwise change
-  // validity semantics of an already-built point type.
-  const { endo, allowInfinityPoint } = extraOpts;
+  // Snapshot every hook and take an owned copy of nested GLV configuration. Later mutations of
+  // the caller's options must not change arithmetic, subgroup, or codec policy.
+  const {
+    endo: endoOpts,
+    allowInfinityPoint,
+    clearCofactor,
+    isTorsionFree,
+    fromBytes,
+    toBytes,
+  } = extraOpts;
   const randomBytes = extraOpts.randomBytes === undefined ? wcRandomBytes : extraOpts.randomBytes;
-  if (endo) {
-    if (!Fp.is0(CURVE.a) || typeof endo.beta !== 'bigint' || !Array.isArray(endo.basises)) {
+  if (endoOpts) {
+    if (!Fp.is0(CURVE.a) || typeof endoOpts.beta !== 'bigint' || !Array.isArray(endoOpts.basises)) {
       throw new Error('invalid endo: expected "beta": bigint and "basises": array');
     }
   }
+  const endo = endoOpts
+    ? {
+        beta: endoOpts.beta,
+        basises: endoOpts.basises!.map((basis) => [...basis]) as EndoBasis,
+      }
+    : undefined;
 
   const lengths = getWLengths(Fp as TArg<IField<T>>, Fn);
 
@@ -537,9 +556,13 @@ export function weierstrass<T>(
     point: WeierstrassPoint<T>,
     isCompressed: boolean
   ): TRet<Uint8Array> {
-    // SEC 1 v2.0 §2.3.3 encodes infinity as the single octet 0x00. Only curves
-    // that opt into infinity as a public point value should expose that byte form.
-    if (allowInfinityPoint && point.is0()) return Uint8Array.of(0) as TRet<Uint8Array>;
+    // Handle infinity before toAffine(), which maps ZERO to (0, 0) silently: without this the
+    // encoder would emit an all-zero byte string that decodes back as a different point. Only
+    // curves that opt into infinity as a public point value get the SEC 1 byte form.
+    if (point.is0()) {
+      if (!allowInfinityPoint) throw new Error('bad point: ZERO');
+      return Uint8Array.of(0) as TRet<Uint8Array>; // SEC 1 v2.0 §2.3.3
+    }
     const { x, y } = point.toAffine();
     const bx = Fp.toBytes(x);
     abool(isCompressed, 'isCompressed');
@@ -557,12 +580,12 @@ export function weierstrass<T>(
     const length = bytes.length;
     const head = bytes[0];
     const tail = bytes.subarray(1);
+    // SEC 1 v2.0 §2.3.4 decodes 0x00 as infinity, but §3.2.2 rejects infinity as a public key.
+    // Leaving 0x00 undecodable by default makes that rejection structural rather than a check:
+    // callers reuse this parser as the strict key boundary, and infinity is simply not
+    // expressible. Curves where infinity is a real wire value opt into the codec instead.
+    // secp256k1 crosstests show OpenSSL raw point codecs accept 0x00 too.
     if (allowInfinityPoint && length === 1 && head === 0x00) return { x: Fp.ZERO, y: Fp.ZERO };
-    // SEC 1 v2.0 §2.3.4 decodes 0x00 as infinity, but §3.2.2 public-key validation
-    // rejects infinity. We therefore keep 0x00 rejected by default because callers
-    // reuse this parser as the strict public-key boundary, and only admit it when
-    // the curve explicitly opts into infinity as a public point value. secp256k1
-    // crosstests show OpenSSL raw point codecs accept 0x00 too.
     // No actual validation is done here: use .assertValidity()
     if (length === comp && (head === 0x02 || head === 0x03)) {
       const x = Fp.fromBytes(tail);
@@ -594,8 +617,8 @@ export function weierstrass<T>(
     }
   }
 
-  const encodePoint = extraOpts.toBytes === undefined ? pointToBytes : extraOpts.toBytes;
-  const decodePoint = extraOpts.fromBytes === undefined ? pointFromBytes : extraOpts.fromBytes;
+  const encodePoint = toBytes === undefined ? pointToBytes : toBytes;
+  const decodePoint = fromBytes === undefined ? pointFromBytes : fromBytes;
   // Hoisted from double() / add(): curve params never change after construction.
   // Koblitz curves (a=0, e.g. secp256k1) skip the three a-multiplications per operation;
   // the selection depends only on public curve constants.
@@ -629,7 +652,10 @@ export function weierstrass<T>(
   /** Asserts coordinate is valid: 0 <= n < Fp.ORDER. */
   function acoord(title: string, n: T, banZero = false) {
     if (!Fp.isValid(n) || (banZero && Fp.is0(n))) throw new Error(`bad point coordinate ${title}`);
-    return n;
+    // Extension-field elements are objects. Keep point coordinates detached from caller-owned
+    // objects so their mutation cannot invalidate cached on-curve / subgroup checks. Primitive
+    // field elements (bigints in shipped prime fields) are already immutable values.
+    return typeof n === 'object' && n !== null ? Fp.create(n) : n;
   }
 
   function aprjpoint(other: unknown): asserts other is Point {
@@ -742,8 +768,7 @@ export function weierstrass<T>(
         // In BLS, ZERO can be serialized, so we allow it.
         // Keep the accepted infinity encoding canonical: projective-equivalent (X, Y, 0) points
         // like (1, 1, 0) compare equal to ZERO, but only (0, 1, 0) should pass this guard.
-        if (extraOpts.allowInfinityPoint && Fp.is0(p.X) && Fp.eql(p.Y, Fp.ONE) && Fp.is0(p.Z))
-          return;
+        if (allowInfinityPoint && Fp.is0(p.X) && Fp.eql(p.Y, Fp.ONE) && Fp.is0(p.Z)) return;
         throw new Error('bad point: ZERO');
       }
       if (validityCache.has(p)) return;
@@ -963,7 +988,6 @@ export function weierstrass<T>(
      * Always torsion-free for cofactor=1 curves.
      */
     isTorsionFree(): boolean {
-      const { isTorsionFree } = extraOpts;
       if (cofactor === _1n) return true;
       if (isTorsionFree) return isTorsionFree(Point, this);
       // unsafe() will use the uncached wNAF path internally, since CURVE_ORDER >= Fn.ORDER
@@ -971,7 +995,6 @@ export function weierstrass<T>(
     }
 
     clearCofactor(): Point {
-      const { clearCofactor } = extraOpts;
       if (cofactor === _1n) return this; // Fast-path
       if (clearCofactor) return clearCofactor(Point, this) as Point;
       // Default fallback assumes the cofactor fits the usual subgroup-scalar
@@ -987,8 +1010,8 @@ export function weierstrass<T>(
 
     toBytes(isCompressed = true): TRet<Uint8Array> {
       abool(isCompressed, 'isCompressed');
-      // Same policy as pointFromBytes(): keep ZERO out of the default byte surface because
-      // callers use these encodings as public keys, where SEC 1 validation rejects infinity.
+      // assertValidity() covers on-curve and subgroup membership. The encoder below repeats the
+      // infinity check rather than relying on this call, so it stays correct for any caller.
       this.assertValidity();
       return encodePoint(Point, this, isCompressed);
     }
@@ -1132,7 +1155,9 @@ export function ecdh(
       const l = publicKey.length;
       if (isCompressed === true && l !== comp) return false;
       if (isCompressed === false && l !== publicKeyUncompressed) return false;
-      return !!Point.fromBytes(publicKey);
+      // SEC 1 §3.2.2: the identity is never a valid public key, even on curves whose codec
+      // can decode it.
+      return !Point.fromBytes(publicKey).is0();
     } catch (error) {
       return false;
     }
@@ -1192,6 +1217,7 @@ export function ecdh(
     if (isProbPub(publicKeyB) === false) throw new Error('second arg must be public key');
     const s = Fn.fromBytes(secretKeyA);
     const b = Point.fromBytes(publicKeyB); // checks for being on-curve
+    if (b.is0()) throw new Error('invalid public key: point at infinity');
     return b.multiply(s).toBytes(isCompressed);
   }
 
@@ -1345,7 +1371,11 @@ export function ecdsa(
       validateSigLength(bytes, format);
       let recid: number | undefined;
       if (format === 'der') {
-        const { r, s } = DER.toSig(abytes(bytes));
+        // Valid scalar INTEGERs use at most Fn.BYTES plus one DER sign-padding byte. Keep the
+        // total bound conservative so malformed inputs are rejected before parsing any INTEGER.
+        if (bytes.length > 2 * Fn.BYTES + 16)
+          throw new DER.Err('invalid signature: DER signature too long');
+        const { r, s } = DER.toSig(abytes(bytes), Fn.BYTES + 1);
         return new Signature(r, s);
       }
       if (format === 'recovered') {
@@ -1584,6 +1614,9 @@ export function ecdsa(
     try {
       const sig = Signature.fromBytes(signature, format);
       const P = Point.fromBytes(publicKey);
+      // SEC 1 verification keys must not be the identity, even when the generic point decoder
+      // permits infinity for another protocol (for example, a pairing curve).
+      if (P.is0()) return false;
       if (lowS && sig.hasHighS()) return false;
       const { r, s } = sig;
       const h = bits2int_modN(message); // mod n, not mod p
@@ -1616,6 +1649,7 @@ export function ecdsa(
     return Signature.fromBytes(signature, 'recovered').recoverPublicKey(message).toBytes();
   }
 
+  // utils.isValidPublicKey() already rejects the identity, so ECDSA needs no shadow copy.
   return Object.freeze({
     keygen,
     getPublicKey,

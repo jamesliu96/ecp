@@ -6,7 +6,7 @@
  * @module
  */
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { aarray, abytes, asafenumber, astring, bytesToHex, bytesToNumberBE, bytesToNumberLE, concatBytes, hexToBytes, randomBytes, validateObject, } from "../utils.js";
+import { aarray, abytes, asafenumber, astring, bytesToHex, bytesToNumberBE, bytesToNumberLE, concatBytes, copyBytes, equalBytes, hexToBytes, randomBytes, validateObject, } from "../utils.js";
 import { mulAddUnsafe, validatePointCons } from "./curve.js";
 import { poly } from "./fft.js";
 import {} from "./hash-to-curve.js";
@@ -69,13 +69,19 @@ export function createFROST(opts) {
         adjustSecret: 'function',
         adjustPublic: 'function',
         adjustGroupCommitmentShare: 'function',
+        adjustTx: 'object',
         adjustDKG: 'function',
     });
     // Cheap constructor-surface sanity check only: this verifies the generic static hooks/fields that
     // FROST consumes, but it does not certify point semantics like BASE/ZERO correctness.
     validatePointCons(opts.Point);
-    const { Point } = opts;
+    const { Point, validatePoint, parsePublicKey, adjustScalar, adjustPoint: adjustPointHook, challenge, adjustNonces, adjustSecret, adjustPublic, adjustGroupCommitmentShare, adjustDKG, } = opts;
     const Fn = opts.Fn === undefined ? Point.Fn : opts.Fn;
+    const adjustTx = opts.adjustTx === undefined
+        ? undefined
+        : { encode: opts.adjustTx.encode, decode: opts.adjustTx.decode };
+    if (adjustTx)
+        validateObject(adjustTx, { encode: 'function', decode: 'function' });
     // Hashes
     const hashBytes = opts.hash;
     const hashToScalar = opts.hashToScalar === undefined
@@ -115,22 +121,26 @@ export function createFROST(opts) {
         return Fn.isLE ? bytesToNumberLE(t) : bytesToNumberBE(t);
     };
     const serializePoint = (p) => p.toBytes();
-    const parsePoint = (bytes) => {
-        // RFC 9591 Section 3.1 requires DeserializeElement validation. Suite-specific validatePoint
-        // hooks tighten this further for ciphersuites in Section 6. Bare createFROST(...) only gets
-        // canonical point decoding unless the caller installs those extra subgroup / identity checks.
-        const p = Point.fromBytes(bytes);
-        if (opts.validatePoint)
-            opts.validatePoint(p);
+    const validatePublicPoint = (p) => {
+        // RFC 9591 Section 3.1 DeserializeElement rejects off-curve, identity, and non-prime-order
+        // elements. This remains mandatory when parsePublicKey replaces the normal byte decoder.
+        p.assertValidity();
+        if (p.is0())
+            throw new Error('invalid point: identity');
+        if (!p.isTorsionFree())
+            throw new Error('bad point: not in prime-order subgroup');
+        if (validatePoint)
+            validatePoint(p);
         return p;
     };
+    const parsePoint = (bytes) => validatePublicPoint(Point.fromBytes(bytes));
     // RFC 9591 Sections 4.1/5.1 model each participant's round-one output as two public commitments.
     const nonceCommitments = (identifier, nonces) => ({
         identifier,
         hiding: serializePoint(Point.BASE.multiply(Fn.fromBytes(nonces.hiding))),
         binding: serializePoint(Point.BASE.multiply(Fn.fromBytes(nonces.binding))),
     });
-    const adjustPoint = opts.adjustPoint === undefined ? (n) => n : opts.adjustPoint;
+    const adjustPoint = adjustPointHook === undefined ? (n) => n : adjustPointHook;
     // We use hex to make it easier to use inside objects
     const validateIdentifier = (n) => {
         // Identifiers are canonical non-zero scalars. Custom / derived identifiers are allowed, so this
@@ -148,18 +158,49 @@ export function createFROST(opts) {
             throw new Error('expected canonical identifier hex');
         return n;
     };
+    const copyRound1Package = (p) => ({
+        identifier: serializeIdentifier(parseIdentifier(p.identifier)),
+        commitment: p.commitment.map((c) => copyBytes(c)),
+        proofOfKnowledge: copyBytes(p.proofOfKnowledge),
+    });
+    const canonicalRound1Packages = (packages) => {
+        const snapshot = packages.map(copyRound1Package);
+        snapshot.sort((a, b) => {
+            const ai = parseIdentifier(a.identifier);
+            const bi = parseIdentifier(b.identifier);
+            return ai < bi ? -1 : ai > bi ? 1 : 0;
+        });
+        return snapshot;
+    };
+    const equalRound1Transcripts = (a, b) => {
+        if (a.length !== b.length)
+            return false;
+        for (let i = 0; i < a.length; i++) {
+            const p = a[i];
+            const q = b[i];
+            if (p.identifier !== q.identifier || p.commitment.length !== q.commitment.length)
+                return false;
+            for (let j = 0; j < p.commitment.length; j++) {
+                if (!equalBytes(p.commitment[j], q.commitment[j]))
+                    return false;
+            }
+            if (!equalBytes(p.proofOfKnowledge, q.proofOfKnowledge))
+                return false;
+        }
+        return true;
+    };
     const Signature = {
         // RFC 9591 Appendix A encodes signatures canonically as
         // SerializeElement(R) || SerializeScalar(z).
         encode: (R, z) => {
             let res = concatBytes(serializePoint(R), Fn.toBytes(z));
-            if (opts.adjustTx)
-                res = opts.adjustTx.encode(res);
+            if (adjustTx)
+                res = adjustTx.encode(res);
             return res;
         },
         decode: (sig) => {
-            if (opts.adjustTx)
-                sig = opts.adjustTx.decode(sig);
+            if (adjustTx)
+                sig = adjustTx.decode(sig);
             // We don't know size of point, but we know size of scalar
             const Rbytes = sig.subarray(0, -Fn.BYTES);
             const R = parsePoint(Rbytes);
@@ -174,8 +215,8 @@ export function createFROST(opts) {
     // Generates pair of (scalar, point)
     const genPointScalarPair = (rng = randomBytes) => {
         let n = randomScalar(rng);
-        if (opts.adjustScalar)
-            n = opts.adjustScalar(n);
+        if (adjustScalar)
+            n = adjustScalar(n);
         let p = Point.BASE.multiply(n);
         return { scalar: n, point: p };
     };
@@ -285,8 +326,8 @@ export function createFROST(opts) {
     };
     const Basic = {
         challenge: (R, PK, msg) => {
-            if (opts.challenge)
-                return opts.challenge(R, PK, msg);
+            if (challenge)
+                return challenge(R, PK, msg);
             return H2(concatBytes(serializePoint(R), serializePoint(PK), msg));
         },
         sign(msg, sk, rng = randomBytes) {
@@ -297,10 +338,10 @@ export function createFROST(opts) {
             return [R, z];
         },
         verify(msg, R, z, PK) {
-            if (opts.adjustPoint)
-                PK = opts.adjustPoint(PK);
-            if (opts.adjustPoint)
-                R = opts.adjustPoint(R);
+            if (adjustPointHook)
+                PK = adjustPointHook(PK);
+            if (adjustPointHook)
+                R = adjustPointHook(R);
             // Signature, message and public key are all public: variable-time is safe on this path.
             const c = this.challenge(R, PK, msg);
             const zB = Point.BASE.multiplyUnsafe(z); // z*G
@@ -414,17 +455,23 @@ export function createFROST(opts) {
                 return { public: round1Public, secret: round1Secret };
             },
             round2: (secret, others) => {
-                validateObject(secret, { identifier: 'bigint', commitment: 'object', signers: 'object' }, { coefficients: 'object', round2Cache: 'object', step: 'number' }, 'secret');
+                validateObject(secret, { identifier: 'bigint', commitment: 'object', signers: 'object' }, { coefficients: 'object', round1Cache: 'object', round2Cache: 'object', step: 'number' }, 'secret');
                 validateSigners(secret.signers, 'secret.signers');
                 aarray(others, 'others');
                 if (others.length !== secret.signers.max - 1)
                     throw new Error('wrong number of round1 packages');
                 if (!secret.coefficients || secret.step === 3)
                     throw new Error('round3 package used in round2');
-                if (secret.round2Cache !== undefined)
+                // Snapshot before validation, then authenticate and cache this exact owned transcript.
+                const authenticatedRound1 = canonicalRound1Packages(others);
+                if (secret.round2Cache !== undefined) {
+                    if (secret.round1Cache === undefined ||
+                        !equalRound1Transcripts(secret.round1Cache, authenticatedRound1))
+                        throw new Error('round1 packages do not match authenticated transcript');
                     return secret.round2Cache;
+                }
                 const res = {};
-                for (const p of others) {
+                for (const p of authenticatedRound1) {
                     if (p.commitment.length !== secret.signers.min)
                         throw new Error('wrong number of commitments');
                     const id = parseIdentifier(p.identifier);
@@ -441,25 +488,29 @@ export function createFROST(opts) {
                         signingShare: signingShare,
                     };
                 }
+                secret.round1Cache = authenticatedRound1;
                 secret.round2Cache = res;
                 secret.step = 2;
                 return res;
             },
             round3: (secret, round1, round2) => {
-                validateObject(secret, { identifier: 'bigint', commitment: 'object', signers: 'object' }, { coefficients: 'object', round2Cache: 'object', step: 'number' }, 'secret');
+                validateObject(secret, { identifier: 'bigint', commitment: 'object', signers: 'object' }, { coefficients: 'object', round1Cache: 'object', round2Cache: 'object', step: 'number' }, 'secret');
                 validateSigners(secret.signers, 'secret.signers');
                 aarray(round1, 'round1');
                 aarray(round2, 'round2');
-                // DKG is outside RFC 9591's signing flow; callers are expected to reuse the same
-                // remote round1 packages already accepted in round2, like frost-rs documents.
                 if (round1.length !== secret.signers.max - 1)
                     throw new Error('wrong length of round1 packages');
-                if (!secret.coefficients || secret.step !== 2)
+                if (!secret.coefficients || secret.step !== 2 || !secret.round1Cache)
                     throw new Error('round2 package used in round3');
-                if (round2.length !== round1.length)
+                const suppliedRound1 = canonicalRound1Packages(round1);
+                const authenticatedRound1 = secret.round1Cache;
+                if (!equalRound1Transcripts(authenticatedRound1, suppliedRound1))
+                    throw new Error('round1 packages do not match authenticated transcript');
+                if (round2.length !== authenticatedRound1.length)
                     throw new Error('wrong length of round2 packages');
                 const merged = {};
-                for (const r1 of round1) {
+                // Use the authenticated owned transcript after comparison; never re-read caller input.
+                for (const r1 of authenticatedRound1) {
                     if (!r1.identifier || !r1.commitment)
                         throw new Error('wrong round1 share');
                     merged[r1.identifier] = { ...r1 };
@@ -471,7 +522,7 @@ export function createFROST(opts) {
                         throw new Error('round1 share for ' + r2.identifier + ' is missing');
                     merged[r2.identifier].signingShare = r2.signingShare;
                 }
-                if (Object.keys(merged).length !== round1.length)
+                if (Object.keys(merged).length !== authenticatedRound1.length)
                     throw new Error('mismatch identifiers between rounds');
                 let signingShare = Fn.ZERO;
                 if (secret.commitment.length !== secret.signers.min)
@@ -522,17 +573,18 @@ export function createFROST(opts) {
                         signingShare: Fn.toBytes(signingShare),
                     },
                 };
-                if (opts.adjustDKG)
-                    res = opts.adjustDKG(res);
+                if (adjustDKG)
+                    res = adjustDKG(res);
                 for (let i = 0; i < secret.coefficients.length; i++)
                     secret.coefficients[i] -= secret.coefficients[i];
                 delete secret.coefficients;
+                delete secret.round1Cache;
                 delete secret.round2Cache;
                 secret.step = 3;
                 return res;
             },
             clean(secret) {
-                validateObject(secret, { identifier: 'bigint', commitment: 'object', signers: 'object' }, { coefficients: 'object', round2Cache: 'object', step: 'number' }, 'secret');
+                validateObject(secret, { identifier: 'bigint', commitment: 'object', signers: 'object' }, { coefficients: 'object', round1Cache: 'object', round2Cache: 'object', step: 'number' }, 'secret');
                 // Instead of replacing secret bigint with another (zero?), we subtract it from itself
                 // in the hope that JIT will modify it inplace, instead of creating new value.
                 // This is unverified and may not work, but it is best we can do in regard of bigints.
@@ -542,6 +594,7 @@ export function createFROST(opts) {
                         secret.coefficients[i] -= secret.coefficients[i];
                 }
                 // for (const c of secret.commitment) c.fill(0);
+                delete secret.round1Cache;
                 delete secret.round2Cache;
                 secret.step = 3;
             },
@@ -659,15 +712,15 @@ export function createFROST(opts) {
             if (bytesToHex(commitment.hiding) !== bytesToHex(expectedCommitment.hiding) ||
                 bytesToHex(commitment.binding) !== bytesToHex(expectedCommitment.binding))
                 throw new Error('incorrect signer commitment');
-            if (opts.adjustSecret)
-                secret = opts.adjustSecret(secret, pub);
-            if (opts.adjustPublic)
-                pub = opts.adjustPublic(pub);
+            if (adjustSecret)
+                secret = adjustSecret(secret, pub);
+            if (adjustPublic)
+                pub = adjustPublic(pub);
             const SK = Fn.fromBytes(secret.signingShare);
             const { lambda, challenge, bindingFactor, groupCommitment } = prepareShare(pub.commitments[0], commitmentList, msg, secret.identifier);
-            const N = opts.adjustNonces ? opts.adjustNonces(groupCommitment, nonces) : nonces;
-            const hidingNonce = opts.adjustNonces ? Fn.fromBytes(N.hiding) : hidingNonce0;
-            const bindingNonce = opts.adjustNonces ? Fn.fromBytes(N.binding) : bindingNonce0;
+            const N = adjustNonces ? adjustNonces(groupCommitment, nonces) : nonces;
+            const hidingNonce = adjustNonces ? Fn.fromBytes(N.hiding) : hidingNonce0;
+            const bindingNonce = adjustNonces ? Fn.fromBytes(N.binding) : bindingNonce0;
             const t = Fn.mul(Fn.mul(lambda, SK), challenge); // challenge * lambda * SK
             const t2 = Fn.mul(bindingNonce, bindingFactor); // bindingNonce * bindingFactor
             const r = Fn.toBytes(Fn.add(Fn.add(hidingNonce, t2), t)); // t + t2 + hidingNonce
@@ -691,8 +744,8 @@ export function createFROST(opts) {
             abytes(msg, undefined, 'msg');
             parseIdentifier(identifier);
             abytes(sigShare, Fn.BYTES, 'sigShare');
-            if (opts.adjustPublic)
-                pub = opts.adjustPublic(pub);
+            if (adjustPublic)
+                pub = adjustPublic(pub);
             const comm = commitmentList.find((i) => i.identifier === identifier);
             if (!comm)
                 throw new Error('cannot find identifier commitment');
@@ -703,8 +756,8 @@ export function createFROST(opts) {
             // Signature shares, commitments and verifying shares are public: vartime is safe here.
             // hC + bC * bF
             let commShare = hidingNonceCommitment.add(bindingNonceCommitment.multiplyUnsafe(bindingFactor));
-            if (opts.adjustGroupCommitmentShare)
-                commShare = opts.adjustGroupCommitmentShare(groupCommitment, commShare);
+            if (adjustGroupCommitmentShare)
+                commShare = adjustGroupCommitmentShare(groupCommitment, commShare);
             const l = Point.BASE.multiplyUnsafe(Fn.fromBytes(sigShare)); // sigShare*G
             // commShare + PK * (challenge * lambda)
             const r = commShare.add(PK.multiplyUnsafe(Fn.mul(challenge, lambda)));
@@ -724,8 +777,8 @@ export function createFROST(opts) {
             validateObject(sigShares, {}, {}, 'sigShares');
             // verifyShare() applies adjustPublic too, so keep the original package for attribution.
             const rawPub = pub;
-            if (opts.adjustPublic)
-                pub = opts.adjustPublic(pub);
+            if (adjustPublic)
+                pub = adjustPublic(pub);
             try {
                 validateCommitmentsNum(pub.signers, commitmentList.length);
             }
@@ -766,13 +819,15 @@ export function createFROST(opts) {
         sign(msg, secretKey) {
             let sk = Fn.fromBytes(secretKey);
             // Taproot single-key signing needs the same scalar normalization as threshold keys.
-            if (opts.adjustScalar)
-                sk = opts.adjustScalar(sk);
+            if (adjustScalar)
+                sk = adjustScalar(sk);
             const [R, z] = Basic.sign(msg, sk);
             return Signature.encode(R, z);
         },
         verify(sig, msg, publicKey) {
-            const PK = opts.parsePublicKey ? opts.parsePublicKey(publicKey) : parsePoint(publicKey);
+            const PK = parsePublicKey
+                ? validatePublicPoint(parsePublicKey(publicKey))
+                : parsePoint(publicKey);
             const { R, z } = Signature.decode(sig);
             return Basic.verify(msg, R, z, PK);
         },

@@ -33,6 +33,12 @@ import { sha256, sha512 } from '@noble/hashes/sha2.js';
 import { shake256 } from '@noble/hashes/sha3.js';
 import { concatBytes, createView } from '@noble/hashes/utils.js';
 import { abytes, checkHash, cleanBytes, copyBytes, equalBytes, getMask, getMessage, getMessagePrehash, randomBytes, splitCoder, validateSigOpts, validateVerOpts, vecCoder, } from "./utils.js";
+// Keys the internal SLH-DSA surface accepts. `context` is deliberately absent: the public
+// wrappers consume it when they format M' and must not forward it, because a key that is
+// accepted and then never read is the same silent downgrade this validation exists to prevent.
+// `extraEntropy` is signing-only, so verification (which takes no options of its own) has none.
+const INTERNAL_SIG_OPT_KEYS = /* @__PURE__ */ Object.freeze(['extraEntropy']);
+const INTERNAL_VER_OPT_KEYS = /* @__PURE__ */ Object.freeze([]);
 /** Winternitz signature params. */
 /**
  * Built-in SLH-DSA Table 2 subset keyed by strength/profile.
@@ -128,8 +134,18 @@ function gen(opts, hashOpts_) {
     // `height` / `chain` and `index` / `hash` share the same spec words, so callers must use the
     // address-type-specific combinations instead of mixing both meanings in one call.
     const setAddr = (opts, addr = new Uint8Array(ADDR_BYTES)) => {
-        const { type, height, tree, layer, index, chain, hash, keypair } = opts;
-        const { subtreeAddr, keypairAddr } = opts;
+        // These objects are created in hot internal loops, so avoid cloning them. Read only own fields:
+        // absent address words must stay absent even if Object.prototype was polluted.
+        const type = Object.hasOwn(opts, 'type') ? opts.type : undefined;
+        const height = Object.hasOwn(opts, 'height') ? opts.height : undefined;
+        const tree = Object.hasOwn(opts, 'tree') ? opts.tree : undefined;
+        const layer = Object.hasOwn(opts, 'layer') ? opts.layer : undefined;
+        const index = Object.hasOwn(opts, 'index') ? opts.index : undefined;
+        const chain = Object.hasOwn(opts, 'chain') ? opts.chain : undefined;
+        const hash = Object.hasOwn(opts, 'hash') ? opts.hash : undefined;
+        const keypair = Object.hasOwn(opts, 'keypair') ? opts.keypair : undefined;
+        const subtreeAddr = Object.hasOwn(opts, 'subtreeAddr') ? opts.subtreeAddr : undefined;
+        const keypairAddr = Object.hasOwn(opts, 'keypairAddr') ? opts.keypairAddr : undefined;
         if (height !== undefined)
             addr[OFFSET_CHAIN_ADDR] = height;
         if (layer !== undefined)
@@ -361,7 +377,7 @@ function gen(opts, hashOpts_) {
             return Uint8Array.from(pk);
         },
         sign: (msg, sk, opts = {}) => {
-            validateSigOpts(opts);
+            opts = validateSigOpts(opts, INTERNAL_SIG_OPT_KEYS);
             let { extraEntropy: random } = opts;
             const [skSeed, skPRF, pk] = secretCoder.decode(sk); // todo: fix
             const [pkSeed, _] = publicCoder.decode(pk);
@@ -427,7 +443,11 @@ function gen(opts, hashOpts_) {
             cleanBytes(R, random, treeAddr, wotsAddr, forsLeaf, forsTreeAddr, indices, roots);
             return SIG;
         },
-        verify: (sig, msg, publicKey) => {
+        verify: (sig, msg, publicKey, opts = {}) => {
+            // The internal verify reads no options; reject any so a stray key (e.g. a caller
+            // mistaking this for the public verify and passing `context`) is reported rather than
+            // silently swallowed by this function's arity.
+            validateVerOpts(opts, INTERNAL_VER_OPT_KEYS);
             const [pkSeed, pubRoot] = publicCoder.decode(publicKey);
             const pk = publicKey;
             // FIPS 205 Algorithm 20 step 1: wrong-length signatures return false instead of throwing
@@ -503,14 +523,16 @@ function gen(opts, hashOpts_) {
         keygen: internal.keygen,
         getPublicKey: internal.getPublicKey,
         sign: (msg, secretKey, opts = {}) => {
-            validateSigOpts(opts);
+            opts = validateSigOpts(opts);
             const M = getMessage(msg, opts.context);
-            const res = internal.sign(M, secretKey, opts);
+            // `context` is consumed by getMessage() above; forwarding it would make the internal
+            // surface accept a key it never reads.
+            const res = internal.sign(M, secretKey, { extraEntropy: opts.extraEntropy });
             cleanBytes(M);
             return res;
         },
         verify: (sig, msg, publicKey, opts = {}) => {
-            validateVerOpts(opts);
+            opts = validateVerOpts(opts);
             return internal.verify(sig, getMessage(msg, opts.context), publicKey);
         },
         prehash: (hash) => {
@@ -522,14 +544,15 @@ function gen(opts, hashOpts_) {
                 keygen: internal.keygen,
                 getPublicKey: internal.getPublicKey,
                 sign: (msg, secretKey, opts = {}) => {
-                    validateSigOpts(opts);
+                    opts = validateSigOpts(opts);
                     const M = getMessagePrehash(rawHash, msg, opts.context);
-                    const res = internal.sign(M, secretKey, opts);
+                    // As above: getMessagePrehash() consumes `context`, so it must not travel further.
+                    const res = internal.sign(M, secretKey, { extraEntropy: opts.extraEntropy });
                     cleanBytes(M);
                     return res;
                 },
                 verify: (sig, msg, publicKey, opts = {}) => {
-                    validateVerOpts(opts);
+                    opts = validateVerOpts(opts);
                     return internal.verify(sig, getMessagePrehash(rawHash, msg, opts.context), publicKey);
                 },
             });
@@ -590,7 +613,7 @@ const genShake = () => (opts) => (pubSeed, skSeed) => {
         },
     };
 };
-const SHAKE_SIMPLE = /* @__PURE__ */ (() => ({ getContext: genShake() }))();
+const SHAKE_SIMPLE = /* @__PURE__ */ (() => ({ isCompressed: false, getContext: genShake() }))();
 /**
  * SLH-DSA-SHAKE-128f: Table 2 row `n=16, h=66, d=22, h'=3, a=6, k=33, lg w=4, m=34`;
  * lengths `publicKey=32`, `secretKey=64`, `signature=17088`, `seed=48`, `signRand=16`.

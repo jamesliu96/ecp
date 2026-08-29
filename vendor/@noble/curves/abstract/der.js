@@ -116,9 +116,14 @@ const _DER = {
             return bytesToNumberBE(data);
         },
     },
-    toSig(bytes) {
+    toSig(bytes, maxScalarBytes) {
         // parse DER signature
         const { Err: E, _int: int, _tlv: tlv } = _DER;
+        if (maxScalarBytes !== undefined) {
+            asafenumber(maxScalarBytes, 'maxScalarBytes');
+            if (maxScalarBytes < 1)
+                throw new E('invalid signature: maxScalarBytes must be positive');
+        }
         const data = abytes(bytes, undefined, 'signature');
         const { v: seqBytes, l: seqLeftBytes } = tlv.decode(0x30, data);
         if (seqLeftBytes.length)
@@ -127,6 +132,10 @@ const _DER = {
         const { v: sBytes, l: sLeftBytes } = tlv.decode(0x02, rLeftBytes);
         if (sLeftBytes.length)
             throw new E('invalid signature: left bytes after parsing');
+        // Enforce curve-provided bounds before bytes-to-hex-to-BigInt conversion can amplify memory.
+        if (maxScalarBytes !== undefined &&
+            (rBytes.length > maxScalarBytes || sBytes.length > maxScalarBytes))
+            throw new E('invalid signature: integer too large');
         return { r: int.decode(rBytes), s: int.decode(sBytes) };
     },
     hexFromSig(sig) {

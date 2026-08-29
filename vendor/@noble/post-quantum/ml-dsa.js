@@ -11,11 +11,26 @@
 import { abool } from '@noble/curves/utils.js';
 import { shake256 } from '@noble/hashes/sha3.js';
 import { genCrystals, XOF128, XOF256 } from "./_crystals.js";
-import { abytes, checkHash, cleanBytes, equalBytes, getMessage, getMessagePrehash, randomBytes, splitCoder, validateOpts, validateSigOpts, validateVerOpts, vecCoder, } from "./utils.js";
-function validateInternalOpts(opts) {
-    validateOpts(opts);
-    if (opts.externalMu !== undefined)
-        abool(opts.externalMu, 'opts.externalMu');
+import { abytes, checkHash, cleanBytes, equalBytes, getMessage, getMessagePrehash, randomBytes, splitCoder, validateSigOpts, validateVerOpts, checkOptKeys, vecCoder, } from "./utils.js";
+/**
+ * Keys each internal surface accepts.
+ *
+ * `context` is deliberately absent from both. The internal functions never read it: the
+ * public wrappers consume it when they format `M'` and must not pass it down, because a
+ * key that is accepted and then not acted on is the same silent downgrade this validation
+ * exists to prevent. `externalMu` is the mirror case, existing here and rejected above.
+ * `extraEntropy` is signing-only, so verification does not take it either.
+ */
+const INTERNAL_SIG_OPT_KEYS = /* @__PURE__ */ Object.freeze([
+    'extraEntropy',
+    'externalMu',
+]);
+const INTERNAL_VER_OPT_KEYS = /* @__PURE__ */ Object.freeze(['externalMu']);
+function validateInternalOpts(opts, allowed) {
+    const normalized = checkOptKeys(opts, allowed);
+    if (normalized.externalMu !== undefined)
+        abool(normalized.externalMu, 'opts.externalMu');
+    return normalized;
 }
 // Constants
 // FIPS 204 fixes ML-DSA over R = Z[X]/(X^256 + 1), so every polynomial has 256 coefficients.
@@ -423,8 +438,8 @@ function getDilithium(opts_) {
         },
         // NOTE: random is optional.
         sign: (msg, secretKey, opts = {}) => {
-            validateSigOpts(opts);
-            validateInternalOpts(opts);
+            opts = validateSigOpts(opts, INTERNAL_SIG_OPT_KEYS);
+            opts = validateInternalOpts(opts, INTERNAL_SIG_OPT_KEYS);
             const { extraEntropy: random, externalMu = false } = opts;
             // FIPS 204 external-mu mode expects the 64-byte message representative µ = H(tr || M).
             if (externalMu)
@@ -516,8 +531,13 @@ function getDilithium(opts_) {
                 const cs1 = s1.map((i) => MultiplyNTTs(i, cHat));
                 for (let i = 0; i < L; i++) {
                     polyAdd(crystals.NTT.decode(cs1[i]), y[i]); // z ← y + ⟨⟨cs1⟩⟩
-                    if (polyChknorm(cs1[i], GAMMA1 - BETA))
+                    if (polyChknorm(cs1[i], GAMMA1 - BETA)) {
+                        // Rejected. Wipe this iteration's secret-derived buffers before retrying; the
+                        // accepted path wipes the same set, and only the persistent key material (s1, s2,
+                        // t0, A, rhoprime) is kept for the next iteration and cleaned at the very end.
+                        cleanBytes(cTilde, cs1, cHat, w1, w, z, y);
                         continue main_loop; // ||z||∞ ≥ γ1 − β
+                    }
                 }
                 // cs1 is now z (▷ Signer’s response)
                 let cnt = 0;
@@ -525,19 +545,25 @@ function getDilithium(opts_) {
                 for (let i = 0; i < K; i++) {
                     const cs2 = crystals.NTT.decode(MultiplyNTTs(s2[i], cHat)); // ⟨⟨cs2⟩⟩ ← NTT−1(cˆ◦ sˆ2)
                     const r0 = polySub(w[i], cs2).map(LowBits); // r0 ← LowBits(w − ⟨⟨cs2⟩⟩)
-                    if (polyChknorm(r0, GAMMA2 - BETA))
+                    if (polyChknorm(r0, GAMMA2 - BETA)) {
+                        cleanBytes(cTilde, cs1, cHat, w1, w, z, y, h, cs2, r0);
                         continue main_loop; // ||r0||∞ ≥ γ2 − β
+                    }
                     const ct0 = crystals.NTT.decode(MultiplyNTTs(t0[i], cHat)); // ⟨⟨ct0⟩⟩ ← NTT−1(cˆ◦ tˆ0)
-                    if (polyChknorm(ct0, GAMMA2))
+                    if (polyChknorm(ct0, GAMMA2)) {
+                        cleanBytes(cTilde, cs1, cHat, w1, w, z, y, h, cs2, r0, ct0);
                         continue main_loop;
+                    }
                     polyAdd(r0, ct0);
                     // ▷ Signer’s hint
                     const hint = polyMakeHint(r0, w1[i]); // h ← MakeHint(−⟨⟨ct0⟩⟩, w− ⟨⟨cs2⟩⟩ + ⟨⟨ct0⟩⟩)
                     h.push(hint.v);
                     cnt += hint.cnt;
                 }
-                if (cnt > OMEGA)
+                if (cnt > OMEGA) {
+                    cleanBytes(cTilde, cs1, cHat, w1, w, z, y, h);
                     continue; // the number of 1’s in h is greater than ω
+                }
                 x256.clean();
                 const res = sigCoder.encode([cTilde, cs1, h]); // σ ← sigEncode(c˜, z mod±q, h)
                 // rho, _K, tr is subarray of secretKey, cannot clean.
@@ -553,7 +579,7 @@ function getDilithium(opts_) {
             throw new Error('Unreachable code path reached, report this error');
         },
         verify: (sig, msg, publicKey, opts = {}) => {
-            validateInternalOpts(opts);
+            opts = validateInternalOpts(opts, INTERNAL_VER_OPT_KEYS);
             const { externalMu = false } = opts;
             // FIPS 204 external-mu mode expects the 64-byte message representative µ = H(tr || M).
             if (externalMu)
@@ -622,16 +648,21 @@ function getDilithium(opts_) {
         lengths: internal.lengths,
         getPublicKey: internal.getPublicKey,
         sign: (msg, secretKey, opts = {}) => {
-            validateSigOpts(opts);
+            opts = validateSigOpts(opts);
             const M = getMessage(msg, opts.context);
-            const res = internal.sign(M, secretKey, opts);
+            // `context` is consumed by getMessage() above; forwarding it would make the internal
+            // surface accept a key it never reads.
+            const res = internal.sign(M, secretKey, {
+                extraEntropy: opts.extraEntropy,
+                externalMu: false,
+            });
             cleanBytes(M);
             return res;
         },
         verify: (sig, msg, publicKey, opts = {}) => {
-            validateVerOpts(opts);
+            opts = validateVerOpts(opts);
             abytes(sig, undefined, 'signature');
-            return internal.verify(sig, getMessage(msg, opts.context), publicKey);
+            return internal.verify(sig, getMessage(msg, opts.context), publicKey, { externalMu: false });
         },
         prehash: (hash) => {
             checkHash(hash, securityLevel);
@@ -643,16 +674,22 @@ function getDilithium(opts_) {
                 keygen: internal.keygen,
                 getPublicKey: internal.getPublicKey,
                 sign: (msg, secretKey, opts = {}) => {
-                    validateSigOpts(opts);
+                    opts = validateSigOpts(opts);
                     const M = getMessagePrehash(rawHash, msg, opts.context);
-                    const res = internal.sign(M, secretKey, opts);
+                    // As above: getMessagePrehash() consumes `context`, so it must not travel further.
+                    const res = internal.sign(M, secretKey, {
+                        extraEntropy: opts.extraEntropy,
+                        externalMu: false,
+                    });
                     cleanBytes(M);
                     return res;
                 },
                 verify: (sig, msg, publicKey, opts = {}) => {
-                    validateVerOpts(opts);
+                    opts = validateVerOpts(opts);
                     abytes(sig, undefined, 'signature');
-                    return internal.verify(sig, getMessagePrehash(rawHash, msg, opts.context), publicKey);
+                    return internal.verify(sig, getMessagePrehash(rawHash, msg, opts.context), publicKey, {
+                        externalMu: false,
+                    });
                 },
             });
         },

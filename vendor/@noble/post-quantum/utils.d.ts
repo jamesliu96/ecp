@@ -186,32 +186,66 @@ export type SigOpts = VerOpts & {
  * ```
  */
 export declare function validateOpts(opts: object): void;
+/** Keys accepted by `verify`. */
+export declare const VER_OPT_KEYS: readonly ['context'];
+/** Keys accepted by `sign`. */
+export declare const SIG_OPT_KEYS: readonly ['context', 'extraEntropy'];
+/**
+ * Rejects option keys the caller did not mean to set.
+ *
+ * Validating the types of known keys while ignoring unknown ones makes a typo
+ * indistinguishable from an omission, and for these options an omission is a
+ * security downgrade rather than a no-op: `{ ctx }` instead of `{ context }` signs
+ * with no domain separation, succeeds, and verifies for anyone who also supplies
+ * none. Nothing at any layer reports it. TypeScript catches this through excess
+ * property checks, so the exposure is JavaScript callers specifically.
+ *
+ * @param opts - Options object to check.
+ * @param allowed - The keys this call site accepts.
+ * Returns a frozen null-prototype snapshot so later reads cannot fall through to a polluted
+ * prototype. Like `checkOpts()` in noble-hashes, only enumerable own properties are copied.
+ * @throws If any other copied key is present or the bag has a custom prototype. {@link TypeError}
+ * @returns Sanitized snapshot of the enumerable own options.
+ * @example
+ * Accept a known option key. A key the list does not name, such as `ctx`, throws instead.
+ * ```ts
+ * import { checkOptKeys } from '@noble/post-quantum/utils.js';
+ * checkOptKeys({ context: new Uint8Array() }, ['context']);
+ * ```
+ */
+export declare function checkOptKeys<T extends object>(opts: T, allowed: readonly string[]): T;
 /**
  * Validates common verification options.
  * `context` itself is validated with `abytes(...)`, and individual algorithms may narrow support
  * further after this shared plain-object gate.
  * @param opts - Verification options. See {@link VerOpts}.
+ * @param allowed - Keys this call site accepts. Defaults to {@link VER_OPT_KEYS}; surfaces that
+ * take extra keys, or take fewer, pass their own list.
  * @throws On wrong argument types. {@link TypeError}
+ * @returns Frozen null-prototype snapshot of the validated options.
  * @example
  * Validate common verification options.
  * ```ts
  * validateVerOpts({ context: new Uint8Array([1]) });
  * ```
  */
-export declare function validateVerOpts(opts: TArg<VerOpts>): void;
+export declare function validateVerOpts<T extends TArg<VerOpts>>(opts: T, allowed?: readonly string[]): T;
 /**
  * Validates common signing options.
  * `extraEntropy` is validated with `abytes(...)`; exact lengths and extra algorithm-specific
  * restrictions are enforced later by callers.
  * @param opts - Signing options. See {@link SigOpts}.
+ * @param allowed - Keys this call site accepts. Defaults to {@link SIG_OPT_KEYS}; surfaces that
+ * take extra keys, or take fewer, pass their own list.
  * @throws On wrong argument types. {@link TypeError}
+ * @returns Frozen null-prototype snapshot of the validated options.
  * @example
  * Validate common signing options.
  * ```ts
  * validateSigOpts({ extraEntropy: new Uint8Array([1]) });
  * ```
  */
-export declare function validateSigOpts(opts: TArg<SigOpts>): void;
+export declare function validateSigOpts<T extends TArg<SigOpts>>(opts: T, allowed?: readonly string[]): T;
 /** Generic signature interface with key generation, signing, and verification. */
 export type Signer = CryptoKeys & {
     /** Public byte lengths for signatures and signing randomness. */

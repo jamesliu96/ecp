@@ -645,7 +645,7 @@ export const ecb: TRet<
         const b = u32(input);
         swap32IfBE(b);
         let i = 0;
-        for (; i + 4 <= b.length; ) {
+        for (; i + 4 <= b.length;) {
           const { s0, s1, s2, s3 } = encrypt(xk, b[i + 0], b[i + 1], b[i + 2], b[i + 3]);
           ((o[i++] = s0), (o[i++] = s1), (o[i++] = s2), (o[i++] = s3));
         }
@@ -675,7 +675,7 @@ export const ecb: TRet<
         const b = u32(ciphertext);
         const o = u32(dst);
         swap32IfBE(b);
-        for (let i = 0; i + 4 <= b.length; ) {
+        for (let i = 0; i + 4 <= b.length;) {
           const { s0, s1, s2, s3 } = decrypt(xk, b[i + 0], b[i + 1], b[i + 2], b[i + 3]);
           ((o[i++] = s0), (o[i++] = s1), (o[i++] = s2), (o[i++] = s3));
         }
@@ -740,7 +740,7 @@ export const cbc: TRet<
         // prettier-ignore
         let s0 = n32[0], s1 = n32[1], s2 = n32[2], s3 = n32[3];
         let i = 0;
-        for (; i + 4 <= b.length; ) {
+        for (; i + 4 <= b.length;) {
           ((s0 ^= b[i + 0]), (s1 ^= b[i + 1]), (s2 ^= b[i + 2]), (s3 ^= b[i + 3]));
           ({ s0, s1, s2, s3 } = encrypt(xk, s0, s1, s2, s3));
           ((o[i++] = s0), (o[i++] = s1), (o[i++] = s2), (o[i++] = s3));
@@ -780,7 +780,7 @@ export const cbc: TRet<
         swap32IfBE(b);
         // prettier-ignore
         let s0 = n32[0], s1 = n32[1], s2 = n32[2], s3 = n32[3];
-        for (let i = 0; i + 4 <= b.length; ) {
+        for (let i = 0; i + 4 <= b.length;) {
           // prettier-ignore
           const ps0 = s0, ps1 = s1, ps2 = s2, ps3 = s3;
           ((s0 = b[i + 0]), (s1 = b[i + 1]), (s2 = b[i + 2]), (s3 = b[i + 3]));
@@ -851,7 +851,7 @@ export const cfb: TRet<
       swap32IfBE(n32);
       // prettier-ignore
       let s0 = n32[0], s1 = n32[1], s2 = n32[2], s3 = n32[3];
-      for (let i = 0; i + 4 <= src32.length; ) {
+      for (let i = 0; i + 4 <= src32.length;) {
         const { s0: e0, s1: e1, s2: e2, s3: e3 } = encrypt(xk, s0, s1, s2, s3);
         dst32[i + 0] = src32[i + 0] ^ e0;
         dst32[i + 1] = src32[i + 1] ^ e1;
@@ -1481,6 +1481,7 @@ class _AesCtrDRBG implements PRG {
   private nonce: TRet<Uint8Array>;
   private state: TRet<Uint8Array>;
   private reseedCnt: number;
+  private destroyed = false;
   constructor(keyLen: number, seed: TArg<Uint8Array>, personalization?: TArg<Uint8Array>) {
     this.blockLen = ctr.blockSize;
     const keyLenBytes = keyLen / 8;
@@ -1512,6 +1513,7 @@ class _AesCtrDRBG implements PRG {
   // Optional `info` is additional input XORed into the reseed block and is
   // limited to the internal state width.
   addEntropy(seed: TArg<Uint8Array>, info?: TArg<Uint8Array>): void {
+    if (this.destroyed) throw new Error('cannot use destroyed DRBG');
     abytes(seed, this.state.length, 'seed');
     // Copy caller entropy before XORing in personalization/additional input,
     // then wipe the mixed seed material after CTR_DRBG_Update consumes it.
@@ -1529,6 +1531,7 @@ class _AesCtrDRBG implements PRG {
   // SP 800-90A Rev. 1 CTR_DRBG without a derivation function limits
   // additional_input to seedlen, which is exactly this internal state width.
   randomBytes(len: number, info?: TArg<Uint8Array>): TRet<Uint8Array> {
+    if (this.destroyed) throw new Error('cannot use destroyed DRBG');
     anumber(len);
     // SP 800-90A Table 3 caps AES CTR_DRBG requests at 2^16 bits = 65536 bytes.
     if (len > 2 ** 16) throw new Error('requested output is too big');
@@ -1546,13 +1549,15 @@ class _AesCtrDRBG implements PRG {
     this.reseedCnt++;
     return res as TRet<Uint8Array>;
   }
-  // Zeroes the current state and resets the counter, but does not make the
-  // instance unusable: later calls continue from the zeroed state.
+  // Zeroes the current state and marks the instance destroyed. Fails closed:
+  // any later randomBytes()/addEntropy() throws instead of continuing from the
+  // zeroed state (which would make subsequent output the predictable zero-key stream).
   clean(): void {
     // `key` and `nonce` alias this backing buffer, so one fill wipes the full
     // secret state in place.
     this.state.fill(0);
     this.reseedCnt = 0;
+    this.destroyed = true;
   }
 }
 

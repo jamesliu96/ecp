@@ -48,14 +48,23 @@ function pbkdf2Init(
   // before allocating the destination buffer.
   if (dkLen > (2 ** 32 - 1) * hash.outputLen) throw new Error('derived key too long');
   const p = kdfInputToBytes(_password, 'password');
-  const s = kdfInputToBytes(_salt, 'salt');
-  // DK = PBKDF2(PRF, Password, Salt, c, dkLen);
-  const DK = new Uint8Array(dkLen);
-  const { iHash, oHash, outputLen } = hmac.create(hash, p);
-  // Drive keyed hashes directly; the wrapper is only needed to initialize their HMAC midstates.
-  const u = new Uint8Array(outputLen);
-  const eng = pbkdf2Engine(iHash, oHash, s, u);
-  return { c, dkLen, asyncTick, DK, outputLen, eng };
+  try {
+    const s = kdfInputToBytes(_salt, 'salt');
+    try {
+      // DK = PBKDF2(PRF, Password, Salt, c, dkLen);
+      const DK = new Uint8Array(dkLen);
+      const { iHash, oHash, outputLen } = hmac.create(hash, p);
+      // Drive keyed hashes directly; the wrapper is only needed to initialize their HMAC midstates.
+      const u = new Uint8Array(outputLen);
+      const eng = pbkdf2Engine(iHash, oHash, s, u);
+      return { c, dkLen, asyncTick, DK, outputLen, eng };
+    } finally {
+      // Uint8Array inputs belong to the caller; only wipe our UTF-8 conversion.
+      if (typeof _salt === 'string') clean(s);
+    }
+  } finally {
+    if (typeof _password === 'string') clean(p);
+  }
 }
 
 // Per-call PRF driver writes U1 into both `u` and `Ti`, then later digests into `u`;
@@ -182,6 +191,11 @@ export async function pbkdf2Async(
   opts: Pbkdf2Opt
 ): Promise<TRet<Uint8Array>> {
   const { c, dkLen, asyncTick, DK, outputLen, eng } = pbkdf2Init(hash, password, salt, opts);
+  // Reuse normal state destruction, then wipe the incomplete output if a host yield aborts.
+  const abort = () => {
+    eng.output(DK);
+    clean(DK);
+  };
   // DK = T1 + T2 + ⋯ + Tdklen/hlen
   for (let ti = 1, pos = 0; pos < dkLen; ti++, pos += outputLen) {
     // Ti = F(Password, Salt, c, i)
@@ -191,10 +205,15 @@ export async function pbkdf2Async(
     // F(Password, Salt, c, i) = U1 ^ U2 ^ ⋯ ^ Uc
     // U1 = PRF(Password, Salt + INT_32_BE(i))
     eng.u1(ti, Ti);
-    await asyncLoop(c - 1, asyncTick, () => {
-      // Uc = PRF(Password, Uc−1)
-      eng.rounds(2, Ti); // c=2 runs exactly one PRF iteration per callback.
-    });
+    await asyncLoop(
+      c - 1,
+      asyncTick,
+      () => {
+        // Uc = PRF(Password, Uc−1)
+        eng.rounds(2, Ti); // c=2 runs exactly one PRF iteration per callback.
+      },
+      abort
+    );
   }
   return eng.output(DK);
 }

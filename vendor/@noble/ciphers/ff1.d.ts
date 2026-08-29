@@ -1,4 +1,8 @@
 import { type Cipher, type TArg, type TRet } from './utils.ts';
+declare function getFF1RadixBytes(radix: number, v: number): number;
+export declare const __TESTS: {
+    getFF1RadixBytes: typeof getFF1RadixBytes;
+};
 /**
  * FPE-FF1 format-preserving encryption.
  * @param radix - Alphabet size for each input digit.
@@ -37,3 +41,4 @@ export declare function FF1(radix: number, key: TArg<Uint8Array>, tweak?: TArg<U
  * ```
  */
 export declare function BinaryFF1(key: TArg<Uint8Array>, tweak?: TArg<Uint8Array>): TRet<Cipher>;
+export {};

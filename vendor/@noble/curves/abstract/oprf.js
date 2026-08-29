@@ -54,7 +54,7 @@ Flow:
 import { abytes, asciiToBytes, bytesToNumberBE, bytesToNumberLE, concatBytes, copyBytes, numberToBytesBE, randomBytes, validateObject, } from "../utils.js";
 import { mulAddUnsafe, validatePointCons } from "./curve.js";
 import { _DST_scalar } from "./hash-to-curve.js";
-import { getMinHashLength, mapHashToField } from "./modular.js";
+import { getMinHashLength, invertCt, mapHashToField } from "./modular.js";
 const _DST_scalarBytes = /* @__PURE__ */ asciiToBytes(_DST_scalar);
 // welcome to generic hell
 /**
@@ -87,12 +87,15 @@ export function createOPRF(opts) {
     // Cheap constructor-surface sanity check only: this verifies the generic static hooks/fields that
     // OPRF consumes, but it does not certify point semantics like BASE/ZERO correctness.
     validatePointCons(opts.Point);
-    const { name, Point, hash } = opts;
+    const { name, Point, hash, hashToGroup: hashToGroupHook, hashToScalar } = opts;
     const { Fn } = Point;
-    const hashToGroup = (msg, ctx) => opts.hashToGroup(msg, {
+    // POPRF evaluates with 1 / (skS + m), where skS is the long-term server secret. Use a
+    // public-exponent Fermat inversion instead of Fn.inv's input-dependent Euclidean loop.
+    const invertSecret = (value) => invertCt(value, Fn.ORDER);
+    const hashToGroup = (msg, ctx) => hashToGroupHook(msg, {
         DST: concatBytes(asciiToBytes('HashToGroup-'), ctx),
     });
-    const hashToScalarPrefixed = (msg, ctx) => opts.hashToScalar(msg, { DST: concatBytes(_DST_scalarBytes, ctx) });
+    const hashToScalarPrefixed = (msg, ctx) => hashToScalar(msg, { DST: concatBytes(_DST_scalarBytes, ctx) });
     const randomScalar = (rng = randomBytes) => {
         if (typeof rng !== 'function')
             throw new TypeError('"rng" expected function, got type=' + typeof rng);
@@ -198,7 +201,7 @@ export function createOPRF(opts) {
         const msg = concatBytes(seed, encode(info), Uint8Array.of(0));
         for (let counter = 0; counter <= 255; counter++) {
             msg[msg.length - 1] = counter;
-            const skS = opts.hashToScalar(msg, { DST: dst });
+            const skS = hashToScalar(msg, { DST: dst });
             if (Fn.is0(skS))
                 continue; // should not happen
             return {
@@ -323,7 +326,7 @@ export function createOPRF(opts) {
                 const t = Fn.add(skS, m);
                 // "Hence, this error can be a signal for the server to replace its
                 // private key". We throw inside; this should be impossible.
-                const invT = Fn.inv(t);
+                const invT = invertSecret(t);
                 const blindedPoints = blinded.map((i) => wirePoint('blinded', i));
                 const evalPoints = blindedPoints.map((i) => i.multiply(invT));
                 const tweakedKey = Point.BASE.multiply(t);
@@ -356,12 +359,12 @@ export function createOPRF(opts) {
                 if (inputPoint.equals(Point.ZERO))
                     throw new Error('Input point at infinity');
                 const t = Fn.add(skS, m);
-                const invT = Fn.inv(t);
+                const invT = invertSecret(t);
                 const unblinded = inputPoint.multiply(invT).toBytes();
                 return hashInput(input, info, unblinded);
             },
         });
     };
-    const res = { name, oprf, voprf, poprf, __tests: Object.freeze({ Fn }) };
+    const res = { name, oprf, voprf, poprf, __tests: Object.freeze({ Fn, invertSecret }) };
     return Object.freeze(res);
 }
