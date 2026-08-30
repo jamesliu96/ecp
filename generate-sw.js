@@ -1,29 +1,29 @@
-import { readdirSync, statSync, writeFileSync } from 'fs';
-import { join, basename, extname } from 'path';
+import { readdir, stat, writeFile } from 'node:fs/promises';
+import { join, basename, extname } from 'node:path';
 
 /** @param {string} dir */
-function walkVendor(dir, base = '') {
+async function walkVendor(dir, base = '') {
   /** @type {string[]} */
   let results = [];
-  for (const name of readdirSync(dir)) {
+  for (const name of await readdir(dir)) {
     const full = join(dir, name);
-    const stat = statSync(full);
-    if (stat.isDirectory())
-      results = results.concat(walkVendor(full, base + name + '/'));
+    const stats = await stat(full);
+    if (stats.isDirectory())
+      results = results.concat(await walkVendor(full, `${base}${name}/`));
     else if (name.endsWith('.js')) results.push(`/vendor/${base}${name}`);
   }
   return results;
 }
 
 /** @param {string} dir */
-function walkSrcTs(dir, base = '') {
+async function walkSrc(dir, base = '') {
   /** @type {string[]} */
   let results = [];
-  for (const name of readdirSync(dir)) {
+  for (const name of await readdir(dir)) {
     const full = join(dir, name);
-    const stat = statSync(full);
-    if (stat.isDirectory()) {
-      results = results.concat(walkSrcTs(full, base + name + '/'));
+    const stats = await stat(full);
+    if (stats.isDirectory()) {
+      results = results.concat(await walkSrc(full, `${base}${name}/`));
     } else if (extname(name) === '.ts') {
       const file = basename(name, '.ts');
       results.push(`/${base}${file}.js`, `/${base}${file}.js.map`);
@@ -42,9 +42,9 @@ const staticAssets = [
   '/main.css',
 ];
 
-const srcJsAssets = walkSrcTs('src');
+const srcJsAssets = await walkSrc('src');
 
-const vendorAssets = walkVendor('vendor/@noble', '@noble/');
+const vendorAssets = await walkVendor('vendor/@noble', '@noble/');
 
 const allAssets = [...staticAssets, ...srcJsAssets, ...vendorAssets];
 
@@ -89,4 +89,4 @@ self.addEventListener('fetch', (event) => {
 });
 `;
 
-writeFileSync('sw.js', swTemplate);
+await writeFile('sw.js', swTemplate);

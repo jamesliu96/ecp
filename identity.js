@@ -29,7 +29,7 @@ export const parseIdentityPublic = (bytes) => {
     return {
         dsaPk: bytes.slice(1, 2593),
         dhPk: bytes.slice(2593, 2625),
-        kemPk: bytes.slice(2625, 2625 + 1568),
+        kemPk: bytes.slice(2625, 4193),
     };
 };
 export const calculateFingerprint = async (identityBytes) => {
