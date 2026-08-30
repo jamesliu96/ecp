@@ -8,11 +8,11 @@
     "tsc:watch": "tsc --watch",
     "tw": "npx @tailwindcss/cli -i src/main.css -o main.css",
     "tw:watch": "npx @tailwindcss/cli -i src/main.css -o main.css --watch",
-    "vendor": "mkdir -p vendor/@noble && cp -r node_modules/@noble/{ciphers,curves,hashes,post-quantum} vendor/@noble/",
+    "vendor": "rm -rf vendor/@noble && mkdir -p vendor/@noble && cp -r node_modules/@noble/{ciphers,curves,hashes,post-quantum} vendor/@noble/",
     "generate:sw": "node generate-sw.js",
     "serve": "serve",
     "dev": "npm-run-all -s vendor generate:sw -p tw:watch tsc:watch serve",
-    "build": "run-p vendor generate:sw tsc"
+    "build": "npm-run-all -s vendor generate:sw -p tw tsc"
   },
   "dependencies": {
     "@noble/ciphers": "2",

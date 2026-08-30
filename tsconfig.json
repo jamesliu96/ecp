@@ -12,5 +12,6 @@
     "sourceMap": true,
     "removeComments": true
   },
-  "exclude": ["node_modules", "vendor"]
+  "include": ["src"],
+  "exclude": []
 }
