@@ -38,12 +38,12 @@ export const decodeBase64URL = (v) => {
         ? Uint8Array.fromBase64(v)
         : Uint8Array.from(atob(v), (c) => c.charCodeAt(0));
 };
-export const concatBytes = (...args) => {
-    const result = new Uint8Array(args.reduce((acc, { length }) => acc + length, 0));
+export const concatBytes = (...items) => {
+    const result = new Uint8Array(items.reduce((acc, { length }) => acc + length, 0));
     let offset = 0;
-    for (const item of args) {
-        result.set(item, offset);
-        offset += item.length;
+    for (const arr of items) {
+        result.set(arr, offset);
+        offset += arr.length;
     }
     return result;
 };

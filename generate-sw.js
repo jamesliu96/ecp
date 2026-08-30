@@ -1,35 +1,35 @@
-import { readdir, stat, writeFile } from 'node:fs/promises';
-import { join, basename, extname } from 'node:path';
+import { createReadStream } from 'node:fs';
+import { readdir, writeFile } from 'node:fs/promises';
+import { join, parse } from 'node:path';
+import { createHash } from 'node:crypto';
 
-/** @param {string} dir */
-async function walkVendor(dir, base = '') {
-  /** @type {string[]} */
-  let results = [];
-  for (const name of await readdir(dir)) {
-    const full = join(dir, name);
-    const stats = await stat(full);
-    if (stats.isDirectory())
-      results = results.concat(await walkVendor(full, `${base}${name}/`));
-    else if (name.endsWith('.js')) results.push(`/vendor/${base}${name}`);
-  }
-  return results;
+/**
+ * @param {string} dir
+ * @param {RegExp} pattern
+ * @param {(entry: { name: string, base: string, path: string }) => string[]} mapFn
+ */
+async function collectAssets(dir, pattern, mapFn) {
+  const entries = await readdir(dir, { recursive: true, withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isFile() && pattern.test(entry.name))
+    .flatMap((entry) => {
+      const fileBase = parse(entry.name).name;
+      const relativePath = join(entry.parentPath ?? dir, entry.name);
+      return mapFn({ name: entry.name, base: fileBase, path: relativePath });
+    });
 }
 
-/** @param {string} dir */
-async function walkSrc(dir, base = '') {
-  /** @type {string[]} */
-  let results = [];
-  for (const name of await readdir(dir)) {
-    const full = join(dir, name);
-    const stats = await stat(full);
-    if (stats.isDirectory()) {
-      results = results.concat(await walkSrc(full, `${base}${name}/`));
-    } else if (extname(name) === '.ts') {
-      const file = basename(name, '.ts');
-      results.push(`/${base}${file}.js`, `/${base}${file}.js.map`);
-    }
+/** @param {string[]} assets */
+async function computeFullHash(assets) {
+  const hash = createHash('sha256');
+  for (const asset of assets) {
+    const filePath = asset.replace(/^\//, '');
+    if (!filePath) continue;
+    try {
+      for await (const chunk of createReadStream(filePath)) hash.update(chunk);
+    } catch {}
   }
-  return results;
+  return hash.digest('hex');
 }
 
 const staticAssets = [
@@ -42,16 +42,27 @@ const staticAssets = [
   '/main.css',
 ];
 
-const srcJsAssets = await walkSrc('src');
+const srcAssets = await collectAssets('src', /\.ts$/, ({ path }) => {
+  const jsPath = `/${path.substring('src/'.length).replace(/\.ts$/, '.js')}`;
+  return [jsPath, `${jsPath}.map`];
+});
 
-const vendorAssets = await walkVendor('vendor/@noble', '@noble/');
+const vendorAssets = await collectAssets(
+  'vendor/@noble',
+  /\.js$/,
+  ({ path }) => [`/${path}`],
+);
 
-const allAssets = [...staticAssets, ...srcJsAssets, ...vendorAssets];
+const allAssets = [...staticAssets, ...srcAssets, ...vendorAssets];
+const fullHashHex = await computeFullHash(allAssets);
 
-const assetsStr = '[\n' + allAssets.map((s) => `  '${s}',`).join('\n') + '\n]';
+const formattedAssets = allAssets.map((asset) => `  '${asset}',`).join('\n');
 
 const swTemplate = `const CACHE_NAME = 'ecp-v1';
-const CACHE = ${assetsStr};
+// sha256:${fullHashHex}
+const CACHE = [
+${formattedAssets}
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -68,9 +79,9 @@ self.addEventListener('activate', (event) => {
       .keys()
       .then((cacheNames) =>
         Promise.all(
-          cacheNames.map((cacheName) => {
-            if (cacheName !== CACHE_NAME) return caches.delete(cacheName);
-          }),
+          cacheNames.map((cacheName) =>
+            cacheName !== CACHE_NAME ? caches.delete(cacheName) : false,
+          ),
         ),
       )
       .then(() => self.clients.claim()),
@@ -80,13 +91,8 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
-  event.respondWith(
-    caches.match(req).then((cachedResponse) => {
-      if (cachedResponse) return cachedResponse;
-      return fetch(req);
-    }),
-  );
+  event.respondWith(caches.match(req).then((resp) => resp ?? fetch(req)));
 });
 `;
 
-await writeFile('sw.js', swTemplate);
+await writeFile('sw.js', swTemplate, 'utf8');

@@ -49,14 +49,14 @@ export const decodeBase64URL = (v: string) => {
     : Uint8Array.from(atob(v), (c) => c.charCodeAt(0));
 };
 
-export const concatBytes = (...args: Uint8Array[]) => {
+export const concatBytes = (...items: Uint8Array[]) => {
   const result = new Uint8Array(
-    args.reduce((acc, { length }) => acc + length, 0),
+    items.reduce((acc, { length }) => acc + length, 0),
   );
   let offset = 0;
-  for (const item of args) {
-    result.set(item, offset);
-    offset += item.length;
+  for (const arr of items) {
+    result.set(arr, offset);
+    offset += arr.length;
   }
   return result;
 };
