@@ -8,7 +8,7 @@ export interface Identity {
   kemPk: Uint8Array;
 }
 
-export interface PeerContact {
+export interface Contact {
   fingerprint: string;
   bundle: string;
   name: string;
@@ -17,7 +17,7 @@ export interface PeerContact {
   lastReadTimestamp: number;
 }
 
-export interface ChannelSession {
+export interface Session {
   contactFp: string;
   version: number;
   conversationID: string;
@@ -35,8 +35,8 @@ export interface ChannelSession {
   lastRespPacket?: string;
 }
 
-export interface MessageData {
-  messageId: string;
+export interface Message {
+  id: string;
   conversationId: string;
   isMe: boolean;
   text: string;

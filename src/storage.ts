@@ -1,5 +1,11 @@
 import { Config } from './config.js';
-import type { ChannelSession, AppSettings } from './types.js';
+import type {
+  Identity,
+  Contact,
+  Session,
+  Message,
+  AppSettings,
+} from './types.js';
 
 export const Settings = (() => {
   const DEFAULT: AppSettings = { persistHandshakes: true };
@@ -12,15 +18,29 @@ export const Settings = (() => {
         return DEFAULT;
       }
     },
-    set: (settings: AppSettings) => {
+    set: (settings: AppSettings): void => {
       localStorage.setItem('ecp_settings', JSON.stringify(settings));
     },
   };
 })();
 
+type StoreName = 'identity' | 'contacts' | 'sessions' | 'messages';
+type StoreEntity = {
+  identity: Identity;
+  contacts: Contact;
+  sessions: Session;
+  messages: Message;
+};
+type StorePrimaryKey = {
+  identity: string;
+  contacts: string;
+  sessions: string;
+  messages: string;
+};
+
 export const DB = (() => {
   let dbInstance: IDBDatabase | undefined;
-  const memorySessions = new Map<string, ChannelSession>();
+  const memorySessions = new Map<string, Session>();
 
   const initDB = () =>
     new Promise<IDBDatabase>((resolve, reject) => {
@@ -32,14 +52,15 @@ export const DB = (() => {
         const db = (e.target as IDBOpenDBRequest).result;
         if (!db.objectStoreNames.contains('identity'))
           db.createObjectStore('identity', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('contacts'))
+          db.createObjectStore('contacts', { keyPath: 'fingerprint' });
         if (!db.objectStoreNames.contains('sessions'))
           db.createObjectStore('sessions', { keyPath: 'contactFp' });
         if (!db.objectStoreNames.contains('messages'))
-          db.createObjectStore('messages', {
-            keyPath: 'messageId',
-          }).createIndex('conversationId', 'conversationId', { unique: false });
-        if (!db.objectStoreNames.contains('contacts'))
-          db.createObjectStore('contacts', { keyPath: 'fingerprint' });
+          db.createObjectStore('messages', { keyPath: 'id' }).createIndex(
+            'conversationId',
+            'conversationId',
+          );
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -48,28 +69,32 @@ export const DB = (() => {
   const getDB = async () => (dbInstance ??= await initDB());
 
   return {
-    get: async <T>(storeName: string, key: string) => {
+    get: async <S extends StoreName>(storeName: S, key: StorePrimaryKey[S]) => {
       if (storeName === 'sessions' && !Settings.get().persistHandshakes)
-        return memorySessions.get(key) as T | undefined;
+        return memorySessions.get(key) as StoreEntity[S] | undefined;
       const db = await getDB();
-      return new Promise<T | undefined>((resolve, reject) => {
+      return new Promise<StoreEntity[S] | undefined>((resolve, reject) => {
         const req = db
           .transaction(storeName, 'readonly')
           .objectStore(storeName)
           .get(key);
         req.onsuccess = () => {
-          if (storeName === 'contacts' && req.result) {
-            req.result.archived = req.result.archived || false;
-            req.result.lastReadTimestamp = req.result.lastReadTimestamp || 0;
+          let result = req.result as StoreEntity[S] | undefined;
+          if (storeName === 'contacts' && result) {
+            (result as Contact).archived =
+              (result as Contact).archived || false;
+            (result as Contact).lastReadTimestamp =
+              (result as Contact).lastReadTimestamp || 0;
           }
-          resolve(req.result);
+          resolve(result);
         };
         req.onerror = () => reject(req.error);
       });
     },
-    put: async (storeName: string, item: unknown) => {
+
+    put: async <S extends StoreName>(storeName: S, item: StoreEntity[S]) => {
       if (storeName === 'sessions' && !Settings.get().persistHandshakes) {
-        const s = item as ChannelSession;
+        const s = item as Session;
         memorySessions.set(s.contactFp, s);
         return;
       }
@@ -83,7 +108,11 @@ export const DB = (() => {
         req.onerror = () => reject(req.error);
       });
     },
-    delete: async (storeName: string, key: string) => {
+
+    delete: async <S extends StoreName>(
+      storeName: S,
+      key: StorePrimaryKey[S],
+    ) => {
       if (storeName === 'sessions' || storeName === 'contacts')
         memorySessions.delete(key);
       const db = await getDB();
@@ -96,19 +125,21 @@ export const DB = (() => {
         req.onerror = () => reject(req.error);
       });
     },
-    getAll: async <T>(storeName: string) => {
+
+    getAll: async <S extends StoreName>(storeName: S) => {
       if (storeName === 'sessions' && !Settings.get().persistHandshakes)
-        return Array.from(memorySessions.values()) as T[];
+        return Array.from(memorySessions.values()) as StoreEntity[S][];
       const db = await getDB();
-      return new Promise<T[]>((resolve, reject) => {
+      return new Promise<StoreEntity[S][]>((resolve, reject) => {
         const req = db
           .transaction(storeName, 'readonly')
           .objectStore(storeName)
           .getAll();
-        req.onsuccess = () => resolve(req.result);
+        req.onsuccess = () => resolve(req.result as StoreEntity[S][]);
         req.onerror = () => reject(req.error);
       });
     },
+
     deleteConversation: async (convId: string) => {
       const db = await getDB();
       return new Promise<void>((resolve, reject) => {
@@ -118,7 +149,8 @@ export const DB = (() => {
           .index('conversationId')
           .openCursor(IDBKeyRange.only(convId));
         req.onsuccess = (e) => {
-          const cursor = (e.target as IDBRequest).result as IDBCursorWithValue;
+          const cursor = (e.target as IDBRequest)
+            .result as IDBCursorWithValue | null;
           if (cursor) {
             store.delete(cursor.primaryKey);
             cursor.continue();

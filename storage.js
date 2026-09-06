@@ -25,14 +25,12 @@ export const DB = (() => {
             const db = e.target.result;
             if (!db.objectStoreNames.contains('identity'))
                 db.createObjectStore('identity', { keyPath: 'id' });
+            if (!db.objectStoreNames.contains('contacts'))
+                db.createObjectStore('contacts', { keyPath: 'fingerprint' });
             if (!db.objectStoreNames.contains('sessions'))
                 db.createObjectStore('sessions', { keyPath: 'contactFp' });
             if (!db.objectStoreNames.contains('messages'))
-                db.createObjectStore('messages', {
-                    keyPath: 'messageId',
-                }).createIndex('conversationId', 'conversationId', { unique: false });
-            if (!db.objectStoreNames.contains('contacts'))
-                db.createObjectStore('contacts', { keyPath: 'fingerprint' });
+                db.createObjectStore('messages', { keyPath: 'id' }).createIndex('conversationId', 'conversationId');
         };
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
@@ -49,11 +47,14 @@ export const DB = (() => {
                     .objectStore(storeName)
                     .get(key);
                 req.onsuccess = () => {
-                    if (storeName === 'contacts' && req.result) {
-                        req.result.archived = req.result.archived || false;
-                        req.result.lastReadTimestamp = req.result.lastReadTimestamp || 0;
+                    let result = req.result;
+                    if (storeName === 'contacts' && result) {
+                        result.archived =
+                            result.archived || false;
+                        result.lastReadTimestamp =
+                            result.lastReadTimestamp || 0;
                     }
-                    resolve(req.result);
+                    resolve(result);
                 };
                 req.onerror = () => reject(req.error);
             });
@@ -109,7 +110,8 @@ export const DB = (() => {
                     .index('conversationId')
                     .openCursor(IDBKeyRange.only(convId));
                 req.onsuccess = (e) => {
-                    const cursor = e.target.result;
+                    const cursor = e.target
+                        .result;
                     if (cursor) {
                         store.delete(cursor.primaryKey);
                         cursor.continue();

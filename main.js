@@ -38,6 +38,9 @@ const UI = {
         UI.$('modal-overlay').classList.add('hidden');
     },
 };
+UI.$('modal-overlay').onclick = (e) => {
+    UI.closeModal();
+};
 const requestIdleCallback = window.requestIdleCallback ?? setTimeout;
 const closePeerDropdown = () => UI.$('peer-dropdown').classList.add('hidden');
 function resetChatView(updateHash = true) {
@@ -104,7 +107,8 @@ async function renderSidebar() {
         botRow.className =
             'flex justify-between items-center text-[10px] text-slate-500 font-mono';
         const fpSpan = document.createElement('span');
-        fpSpan.textContent = c.fingerprint.substring(0, 8);
+        fpSpan.className = 'truncate';
+        fpSpan.textContent = c.fingerprint;
         botRow.appendChild(fpSpan);
         if (c.archived) {
             const archSpan = document.createElement('span');
@@ -124,6 +128,8 @@ async function renderSidebar() {
     UI.$('contacts-list').replaceChildren(frag);
 }
 async function selectContact(fp, isNavigatingHistory = false) {
+    if (fp === State.currentContactFp)
+        return;
     const contact = await DB.get('contacts', fp);
     if (!contact) {
         resetChatView(true);
@@ -194,7 +200,7 @@ async function renderChatLog() {
     const chatMsgs = msgs
         .filter((m) => session && m.conversationId === session.conversationID)
         .sort((a, b) => a.timestamp === b.timestamp
-        ? a.messageId.localeCompare(b.messageId)
+        ? a.id.localeCompare(b.id)
         : a.timestamp - b.timestamp);
     const ctn = UI.$('chat-messages');
     const isNearBottom = ctn.scrollHeight - ctn.scrollTop - ctn.clientHeight < 150;
@@ -330,7 +336,7 @@ UI.$('chat-form').onsubmit = async (e) => {
         if (!session) {
             const { packet, session: newSession } = await CreateInit(State.currentContactFp, text);
             await DB.put('messages', {
-                messageId: randomUUID(),
+                id: randomUUID(),
                 conversationId: newSession.conversationID,
                 isMe: true,
                 text,
@@ -341,7 +347,7 @@ UI.$('chat-form').onsubmit = async (e) => {
         else {
             const packet = await EncryptMessage(session, text);
             await DB.put('messages', {
-                messageId: randomUUID(),
+                id: randomUUID(),
                 conversationId: session.conversationID,
                 isMe: true,
                 text,
@@ -574,7 +580,7 @@ async function processClipboardText(rawText) {
             if (type === Config.PACKET_TYPES.INIT) {
                 const { session, plaintext, respPacket } = await ProcessInit(pktBytes);
                 await DB.put('messages', {
-                    messageId: randomUUID(),
+                    id: randomUUID(),
                     conversationId: session.conversationID,
                     isMe: false,
                     text: plaintext,
@@ -600,7 +606,7 @@ async function processClipboardText(rawText) {
             else if (type === Config.PACKET_TYPES.MSG) {
                 const { session, plaintext } = await DecryptMessage(pktBytes);
                 await DB.put('messages', {
-                    messageId: randomUUID(),
+                    id: randomUUID(),
                     conversationId: session.conversationID,
                     isMe: false,
                     text: plaintext,
@@ -644,20 +650,15 @@ document.addEventListener('paste', async (e) => {
 async function showPeerMetadata(contactFp) {
     const session = await DB.get('sessions', contactFp);
     const contact = await DB.get('contacts', contactFp);
-    const stateColor = session
-        ? session.state === 'ESTABLISHED'
-            ? 'text-emerald-400'
-            : 'text-amber-400'
-        : 'text-slate-500';
-    let bundleHashText = 'N/A';
-    if (contact?.bundle)
-        bundleHashText = `${calculateFingerprint(decodeBase64URL(contact.bundle)).substring(0, 16)}...`;
     UI.$('metadata-title').textContent = 'Peer Diagnostics';
     UI.$('metadata-content').innerHTML = `
     <div><strong>Peer FP:</strong> <span id="meta-fp"></span></div>
-    <div><strong>Bundle Hash:</strong> <span id="meta-hash"></span></div>
     <hr class="border-slate-800 my-2" />
-    <div><strong>Double Ratchet State:</strong> <span id="meta-state" class="${stateColor}"></span></div>
+    <div><strong>Double Ratchet State:</strong> <span id="meta-state" class="${session
+        ? session.state === 'ESTABLISHED'
+            ? 'text-emerald-400'
+            : 'text-amber-400'
+        : 'text-slate-500'}"></span></div>
     ${session
         ? `<div><strong>Conversation ID:</strong> <span id="meta-cid"></span></div>
     <div><strong>Message Sequence (Ns):</strong> <span id="meta-ns"></span></div>
@@ -667,11 +668,10 @@ async function showPeerMetadata(contactFp) {
         : ''}
     <div class="mt-4 text-[9px] text-slate-500 italic">* Ephemeral key material zeroized for memory hygiene</div>
   `;
-    UI.$('meta-fp').textContent = contact?.fingerprint || 'Unknown';
-    UI.$('meta-hash').textContent = bundleHashText;
+    UI.$('meta-fp').textContent = contact ? contact.fingerprint : 'Unknown';
     UI.$('meta-state').textContent = session ? session.state : 'IDLE';
     if (session) {
-        UI.$('meta-cid').textContent = session.conversationID.substring(0, 16);
+        UI.$('meta-cid').textContent = session.conversationID;
         UI.$('meta-ns').textContent = session.Ns.toString();
         UI.$('meta-nr').textContent = session.Nr.toString();
         UI.$('meta-pn').textContent = session.PN.toString();
@@ -695,7 +695,7 @@ function showMessageMetadata(msg) {
     <div><strong>Post-Quantum Signature:</strong> ML-DSA-87</div>
     <div><strong>Key Derivation & Hashing:</strong> HKDF-SHA256 / HMAC-SHA256</div>
   `;
-    UI.$('meta-frame').textContent = msg.messageId;
+    UI.$('meta-frame').textContent = msg.id;
     UI.$('meta-vector').textContent = msg.isMe
         ? 'Egress (Local)'
         : 'Ingress (Remote)';

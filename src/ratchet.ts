@@ -25,7 +25,7 @@ import {
   calculateFingerprint,
 } from './identity.js';
 import { DB } from './storage.js';
-import type { PeerContact, ChannelSession } from './types.js';
+import type { Session } from './types.js';
 
 export async function CreateInit(contactFp: string, plaintextStr: string) {
   const localFp = await getLocalFingerprint();
@@ -35,7 +35,7 @@ export async function CreateInit(contactFp: string, plaintextStr: string) {
     );
 
   const local = await getLocalIdentity();
-  const contact = await DB.get<PeerContact>('contacts', contactFp);
+  const contact = await DB.get('contacts', contactFp);
   if (!contact) throw new Error('Peer context missing');
 
   const localPubBytes = serializeIdentityPublic(local);
@@ -120,7 +120,7 @@ export async function CreateInit(contactFp: string, plaintextStr: string) {
     ),
   );
 
-  const session: ChannelSession = {
+  const session: Session = {
     contactFp,
     version: 1,
     conversationID: encodeBase64URL(convIdHash.slice(0, 16)),
@@ -176,7 +176,7 @@ export async function ProcessInit(packetBytes: Uint8Array) {
   if (!verifyMLDSA87(sig, sigInput, senderId.dsaPk))
     throw new Error('INIT signature rejected');
 
-  let contact = await DB.get<PeerContact>('contacts', senderFp);
+  let contact = await DB.get('contacts', senderFp);
   if (!contact) {
     contact = {
       fingerprint: senderFp,
@@ -279,7 +279,7 @@ export async function ProcessInit(packetBytes: Uint8Array) {
   }
 
   const respPacket = concatBytes(respHdr, respCt);
-  const session: ChannelSession = {
+  const session: Session = {
     contactFp: senderFp,
     version: 1,
     conversationID: encodeBase64URL(convIdHash.slice(0, 16)),
@@ -309,7 +309,7 @@ export async function ProcessResp(packetBytes: Uint8Array) {
   if (type !== Config.PACKET_TYPES.RESP)
     throw new Error('Protocol type mismatch');
 
-  const sessions = await DB.getAll<ChannelSession>('sessions');
+  const sessions = await DB.getAll('sessions');
   const session = sessions.find(
     (s) => s.state === 'HANDSHAKE_SENT' || s.state === 'ESTABLISHED',
   );
@@ -365,7 +365,7 @@ export async function ProcessResp(packetBytes: Uint8Array) {
   return { alreadyEstablished: false, session };
 }
 
-export function stepDH(s: ChannelSession, rPubBytes?: Uint8Array) {
+export function stepDH(s: Session, rPubBytes?: Uint8Array) {
   if (rPubBytes) {
     const dh = getSharedSecretX25519(s.DHs.sk, rPubBytes);
     const drIkm = hkdfSHA256(
@@ -400,10 +400,7 @@ export function stepDH(s: ChannelSession, rPubBytes?: Uint8Array) {
   oldRK2.fill(0);
 }
 
-export async function EncryptMessage(
-  session: ChannelSession,
-  plaintextStr: string,
-) {
+export async function EncryptMessage(session: Session, plaintextStr: string) {
   if (session.state !== 'ESTABLISHED')
     throw new Error('Channel constraint violation');
   if (!session.CKs) stepDH(session);
@@ -482,7 +479,7 @@ export async function DecryptMessage(packetBytes: Uint8Array) {
   const n = dv.getUint32(offset);
   offset += 4;
 
-  const sessions = await DB.getAll<ChannelSession>('sessions');
+  const sessions = await DB.getAll('sessions');
   const session = sessions.find(
     (s) => s.conversationID === encodeBase64URL(cIdBytes),
   );

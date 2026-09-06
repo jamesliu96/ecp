@@ -11,7 +11,7 @@ import { DB } from './storage.js';
 import type { Identity } from './types.js';
 
 export const getLocalIdentity = async () => {
-  let id = await DB.get<Identity>('identity', 'local');
+  let id = await DB.get('identity', 'local');
 
   if (!id) {
     const dsaKP = keygenMLDSA87();
