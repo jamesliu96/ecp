@@ -4,11 +4,10 @@ A serverless, pure-frontend web implementation of the End-to-End Encrypted Clipb
 
 ## Core Architecture
 
-- **Zero-Backend Processing:** Operates strictly on the client side. Messages are exchanged out-of-band via user-selected transport mediums (e.g., instant messengers, email, shared documents).
+- **Zero-Backend Processing:** Operates strictly on the client side. Messages are exchanged out-of-band via user-selected transport channels, such as instant messengers, email, shared documents, social media, QR codes, or physical notes.
 - **Local Persistence:** Encrypted session states, keys, and identity profiles reside entirely within client-side `IndexedDB` storage.
 - **Post-Quantum Cryptography (PQC):** Combines classical cryptography with NIST PQC standards via `@noble` libraries (`@noble/ciphers`, `@noble/curves`, `@noble/hashes`, `@noble/post-quantum`).
-- **Zeroization & Memory Hygiene:** Ephemeral key material and unencrypted buffers undergo explicit zeroization immediately following cryptographic operations.
-- **Zero Tracking:** No telemetry, third-party network requests, or external assets.
+- **Zeroization & Memory Hygiene:** Ephemeral key material undergoes explicit zeroization immediately following cryptographic operations.
 
 ## Threat Model & Security Boundaries
 
@@ -69,7 +68,7 @@ The application is written in standard TypeScript and styled with Tailwind CSS v
 
 ### Framing & Packet Architecture
 
-All serialized wire payloads are subject to a **5 MB hard limit** and begin with a mandatory 12-byte binary header.
+All serialized wire payloads enforce a 5 MB limit and begin with a mandatory 12-byte binary header.
 
 #### Header Layout (12 Bytes Total)
 
@@ -94,36 +93,46 @@ All serialized wire payloads are subject to a **5 MB hard limit** and begin with
 
 #### 1. INIT Packet Payload (`0x01`)
 
-Establishes the session, performs hybrid key agreement, and verifies mutual identity.
+Establishes the session, performs hybrid key agreement, and verifies mutual identity. To prevent parsing faults, the receiver enforces a strict minimum structural integrity size of 14,639 bytes.
 
-| Component Field                     | Size (Bytes) | Description                                        |
-| ----------------------------------- | ------------ | -------------------------------------------------- |
-| **Sender Identity Bundle**          | 4,193        | Complete Identity Bundle of Initiator              |
-| **Receiver Identity Bundle**        | 4,193        | Complete Identity Bundle of Target Peer            |
-| **Ephemeral X25519 PK ($Ek_{pk}$)** | 32           | Ephemeral DH Public Key                            |
-| **ML-KEM Ciphertext ($KEM_{CT}$)**  | 1,568        | Encapsulated key against Receiver's ML-KEM PK      |
-| **ML-DSA Signature ($Sig$)**        | 4,627        | Signature over parameters verifying handshake      |
-| **Encrypted Initial Payload**       | Variable     | AES-256-GCM ciphertext containing setup parameters |
+| Size (Bytes) | Field                               | Description                                        |
+| ------------ | ----------------------------------- | -------------------------------------------------- |
+| 4,193        | **Sender Identity Bundle**          | Initiator's public Identity Bundle                 |
+| 4,193        | **Receiver Identity Bundle**        | Target peer's public Identity Bundle               |
+| 32           | **Ephemeral X25519 PK ($Ek_{pk}$)** | Ephemeral DH Public Key                            |
+| 1,568        | **ML-KEM Ciphertext ($KEM_{CT}$)**  | Encapsulated key against Receiver's ML-KEM PK      |
+| 4,627        | **ML-DSA Signature ($Sig$)**        | Signature over parameters verifying handshake      |
+| Variable     | **Encrypted Payload**               | AES-256-GCM ciphertext containing setup parameters |
 
 #### 2. RESP Packet Payload (`0x02`)
 
-Acknowledges handshake initialization and confirms ratchet configuration.
+Acknowledges initialization. The protocol drops RESP payloads shorter than 60 bytes (12-byte header + 48-byte payload).
 
-| Component Field       | Size (Bytes) | Description                                                                                  |
-| --------------------- | ------------ | -------------------------------------------------------------------------------------------- |
-| **Encrypted Payload** | 48           | AES-256-GCM payload containing Responder Ephemeral X25519 PK (32 bytes) + GCM Tag (16 bytes) |
+| Size (Bytes) | Field                 | Description                                                                                  |
+| ------------ | --------------------- | -------------------------------------------------------------------------------------------- |
+| 48           | **Encrypted Payload** | AES-256-GCM payload containing Responder Ephemeral X25519 PK (32 bytes) + GCM Tag (16 bytes) |
 
 #### 3. MSG Packet Payload (`0x03`)
 
-Carries standard encrypted message and clipboard payloads within an active Double Ratchet session.
+Carries active Double Ratchet session payloads. Any `MSG` packet shorter than 84 bytes is dropped as truncated.
 
-| Header Offset (Bytes) | Field Name                   | Type / Size | Description                               |
-| --------------------- | ---------------------------- | ----------- | ----------------------------------------- |
-| `0` – `15`            | Conversation ID              | `Bytes[16]` | Pseudorandom session identifier           |
-| `16` – `47`           | Ephemeral DH Key             | `Bytes[32]` | Current ratchet step X25519 Public Key    |
-| `48` – `51`           | Previous Chain Length ($PN$) | `UInt32BE`  | Number of messages sent in previous chain |
-| `52` – `55`           | Message Sequence ($N_s$)     | `UInt32BE`  | Message count index in current chain      |
-| `56` +                | Payload Ciphertext           | Variable    | AES-256-GCM encrypted message body        |
+| Absolute Offset | Field Name                   | Type / Size | Description                                             |
+| --------------- | ---------------------------- | ----------- | ------------------------------------------------------- |
+| `12` – `27`     | Conversation ID              | `Bytes[16]` | Pseudorandom session identifier                         |
+| `28` – `59`     | Ephemeral DH Key             | `Bytes[32]` | Current ratchet step X25519 Public Key                  |
+| `60` – `63`     | Previous Chain Length ($PN$) | `UInt32BE`  | Number of messages sent in previous chain               |
+| `64` – `67`     | Message Sequence ($N_s$)     | `UInt32BE`  | Message count index in current chain                    |
+| `68`+           | Payload Ciphertext           | Variable    | AES-256-GCM message body and 16-byte authentication tag |
+
+## Ratchet State Machine & Error Handling
+
+To maintain synchronization and prevent abuse, ECP dictates specific constraints on `MSG` frame validation.
+
+- **Sequence Progression & Replay Drop:** The protocol demands strict forward progression. During `DecryptMessage`, the parsed sequence number ($N$) is compared against the expected receive sequence ($N_r$). If $N < N_r$, the message is dropped immediately, throwing a `"Message frame out of order or replayed"` error.
+
+- **Gap Limitation & Skipped Keys:** ECP handles dropped packets by advancing the receiving chain up to the target sequence $N$. To prevent CPU exhaustion or memory starvation attacks via continuous HMAC chaining, ECP enforces a strict limit: if $N - N_r > 2000$, it throws an `"Excessive message gap"` exception.
+
+- **Ephemeral Zeroization:** During skipped frame advancement ($N_r < N$), intermediate receiving chain keys ($CK_r$) are wiped from RAM using `.fill(0)` immediately after generating the next step.
 
 ### Cryptographic Derivations & Formulas
 
