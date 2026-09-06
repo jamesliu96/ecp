@@ -38,12 +38,7 @@ const UI = {
         UI.$('modal-overlay').classList.add('hidden');
     },
 };
-const escapeHtml = (str) => str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
+const requestIdleCallback = window.requestIdleCallback ?? setTimeout;
 const closePeerDropdown = () => UI.$('peer-dropdown').classList.add('hidden');
 function resetChatView(updateHash = true) {
     delete State.currentContactFp;
@@ -120,10 +115,10 @@ async function renderSidebar() {
         div.appendChild(topRow);
         div.appendChild(botRow);
         div.onclick = () => selectContact(c.fingerprint);
-        div.addEventListener('contextmenu', (e) => {
+        div.oncontextmenu = (e) => {
             e.preventDefault();
             showPeerMetadata(c.fingerprint);
-        });
+        };
         frag.appendChild(div);
     }
     UI.$('contacts-list').replaceChildren(frag);
@@ -229,10 +224,10 @@ async function renderChatLog() {
         else {
             div.textContent = m.text;
         }
-        div.addEventListener('contextmenu', (e) => {
+        div.oncontextmenu = (e) => {
             e.preventDefault();
             showMessageMetadata(m);
-        });
+        };
         frag.appendChild(div);
     }
     ctn.replaceChildren(frag);
@@ -279,7 +274,16 @@ UI.$('btn-add-contact').onclick = async () => {
         <button id="btn-confirm-add" class="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg min-h-11 cursor-pointer transition-colors shadow-sm">Save Peer</button>
       </div>
     `);
-        setTimeout(() => UI.$('new-alias-input')?.focus());
+        requestIdleCallback(() => {
+            const input = UI.$('new-alias-input');
+            if (input) {
+                input.focus();
+                input.onkeydown = (e) => {
+                    if (e.key === 'Enter')
+                        UI.$('btn-confirm-add').click();
+                };
+            }
+        });
         UI.$('btn-cancel-add').onclick = UI.closeModal;
         UI.$('btn-confirm-add').onclick = async () => {
             try {
@@ -343,10 +347,9 @@ UI.$('chat-form').onsubmit = async (e) => {
                 text,
                 timestamp: Date.now(),
             });
-            let bundleBase64;
-            if (session.lastRespPacket)
-                bundleBase64 = encodeBase64URL(concatBytes(decodeBase64URL(session.lastRespPacket), packet));
-            await handleOutgoing(encodeBase64URL(packet), bundleBase64);
+            await handleOutgoing(encodeBase64URL(packet), session.lastRespPacket
+                ? encodeBase64URL(concatBytes(decodeBase64URL(session.lastRespPacket), packet))
+                : undefined);
         }
         input.value = '';
         await renderChatLog();
@@ -405,11 +408,15 @@ UI.$('btn-rename-contact').onclick = async () => {
       <button id="btn-save" class="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg min-h-11 cursor-pointer transition-colors shadow-sm">Save</button>
     </div>
   `);
-    setTimeout(() => {
+    requestIdleCallback(() => {
         const input = UI.$('rename-val');
         if (input) {
             input.value = contact.name;
             input.focus();
+            input.onkeydown = (e) => {
+                if (e.key === 'Enter')
+                    UI.$('btn-save').click();
+            };
         }
     });
     UI.$('btn-cancel').onclick = UI.closeModal;
@@ -455,12 +462,11 @@ UI.$('btn-delete-contact').onclick = async () => {
         return;
     const targetFp = State.currentContactFp;
     const session = await DB.get('sessions', targetFp);
-    const warningText = session
-        ? 'Warning: This peer has an active channel. Deleting will permanently destroy local keys and message history.'
-        : 'This will permanently delete the peer and all associated local history.';
     UI.showModal(`
     <div class="p-4 border-b border-red-900/50 bg-red-950/30"><h3 class="font-bold text-red-400">Confirm Deletion</h3></div>
-    <div class="p-4 text-sm text-slate-300">${escapeHtml(warningText)}</div>
+    <div class="p-4 text-sm text-slate-300">${session
+        ? 'Warning: This peer has an active channel. Deleting will permanently destroy local keys and message history.'
+        : 'This will permanently delete the peer and all associated local history.'}</div>
     <div class="p-4 flex justify-end gap-2 border-t border-slate-800/50">
       <button id="btn-cancel-del" class="px-4 py-2 text-sm text-slate-400 hover:text-slate-200 min-h-11 cursor-pointer transition-colors">Cancel</button>
       <button id="btn-confirm-del" class="px-4 py-2 text-sm bg-red-600 hover:bg-red-500 text-white font-medium rounded-lg min-h-11 cursor-pointer transition-colors shadow-sm">Delete Peer</button>
@@ -699,10 +705,10 @@ function showMessageMetadata(msg) {
     UI.$('metadata-overlay').classList.remove('hidden');
     UI.$('metadata-overlay').classList.add('flex');
 }
-UI.$('metadata-overlay').addEventListener('click', () => {
+UI.$('metadata-overlay').onclick = () => {
     UI.$('metadata-overlay').classList.add('hidden');
     UI.$('metadata-overlay').classList.remove('flex');
-});
+};
 UI.$('btn-close-metadata').onclick = () => {
     UI.$('metadata-overlay').classList.add('hidden');
     UI.$('metadata-overlay').classList.remove('flex');
