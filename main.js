@@ -735,28 +735,4 @@ if (document.readyState === 'loading')
     document.addEventListener('DOMContentLoaded', initApp);
 else
     initApp();
-addEventListener('load', async () => {
-    try {
-        const registration = await navigator.serviceWorker.register('/sw.js');
-        console.info('[ServiceWorker] Registration complete.');
-        registration.addEventListener('updatefound', () => {
-            const newWorker = registration.installing;
-            if (!newWorker)
-                return;
-            newWorker.addEventListener('statechange', () => {
-                if (newWorker.state === 'installed' &&
-                    navigator.serviceWorker.controller) {
-                    console.info('[ServiceWorker] New version available.');
-                    UI.showToast('Update Available');
-                }
-            });
-        });
-        setInterval(() => {
-            registration.update();
-        }, 60000);
-    }
-    catch (err) {
-        console.error('[ServiceWorker] Registration failed:', err);
-    }
-});
 //# sourceMappingURL=main.js.map
