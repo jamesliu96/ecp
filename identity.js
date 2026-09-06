@@ -32,9 +32,9 @@ export const parseIdentityPublic = (bytes) => {
         kemPk: bytes.slice(2625, 4193),
     };
 };
-export const calculateFingerprint = async (identityBytes) => {
+export const calculateFingerprint = (identityBytes) => {
     const idPub = parseIdentityPublic(identityBytes);
     return encodeBase64URL(sha256(concatBytes(new TextEncoder().encode('ECP-ID-v1'), idPub.dsaPk, idPub.dhPk, idPub.kemPk)));
 };
-export const getLocalFingerprint = async () => await calculateFingerprint(serializeIdentityPublic(await getLocalIdentity()));
+export const getLocalFingerprint = async () => calculateFingerprint(serializeIdentityPublic(await getLocalIdentity()));
 //# sourceMappingURL=identity.js.map
