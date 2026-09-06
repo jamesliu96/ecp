@@ -4,9 +4,9 @@ import { DB } from './storage.js';
 export const getLocalIdentity = async () => {
     let id = await DB.get('identity', 'local');
     if (!id) {
-        const dsaKP = await keygenMLDSA87();
-        const dhKP = await keygenX25519();
-        const pqKP = await keygenMLKEM1024();
+        const dsaKP = keygenMLDSA87();
+        const dhKP = keygenX25519();
+        const pqKP = keygenMLKEM1024();
         id = {
             id: 'local',
             dsaSk: dsaKP.secretKey,
@@ -34,7 +34,7 @@ export const parseIdentityPublic = (bytes) => {
 };
 export const calculateFingerprint = async (identityBytes) => {
     const idPub = parseIdentityPublic(identityBytes);
-    return encodeBase64URL(await sha256(concatBytes(new TextEncoder().encode('ECP-ID-v1'), idPub.dsaPk, idPub.dhPk, idPub.kemPk)));
+    return encodeBase64URL(sha256(concatBytes(new TextEncoder().encode('ECP-ID-v1'), idPub.dsaPk, idPub.dhPk, idPub.kemPk)));
 };
 export const getLocalFingerprint = async () => await calculateFingerprint(serializeIdentityPublic(await getLocalIdentity()));
 //# sourceMappingURL=identity.js.map

@@ -1,6 +1,8 @@
-import { sha256, hmac, hkdf } from '@noble/hashes/webcrypto.js';
-import { gcm } from '@noble/ciphers/webcrypto.js';
-import { x25519 } from '@noble/curves/webcrypto.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { hmac } from '@noble/hashes/hmac.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { gcm } from '@noble/ciphers/aes.js';
+import { x25519 } from '@noble/curves/ed25519.js';
 import { ml_dsa87 } from '@noble/post-quantum/ml-dsa.js';
 import { ml_kem1024 } from '@noble/post-quantum/ml-kem.js';
 
@@ -101,11 +103,8 @@ export const keygenMLDSA87 = ml_dsa87.keygen;
 export const signMLDSA87 = ml_dsa87.sign;
 export const verifyMLDSA87 = ml_dsa87.verify;
 
-const X25519 = (await x25519.isSupported())
-  ? x25519
-  : (await import('@noble/curves/ed25519.js')).x25519;
-export const keygenX25519 = X25519.keygen;
-export const getSharedSecretX25519 = X25519.getSharedSecret;
+export const keygenX25519 = x25519.keygen;
+export const getSharedSecretX25519 = x25519.getSharedSecret;
 
 export const keygenMLKEM1024 = ml_kem1024.keygen;
 export const encapsulateMLKEM1024 = ml_kem1024.encapsulate;

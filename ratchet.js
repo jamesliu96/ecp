@@ -14,22 +14,22 @@ export async function CreateInit(contactFp, plaintextStr) {
     const localPubBytes = serializeIdentityPublic(local);
     const peerPubBytes = decodeBase64URL(contact.bundle);
     const peerId = parseIdentityPublic(peerPubBytes);
-    const ekKP = await keygenX25519();
-    const kemRes = await encapsulateMLKEM1024(peerId.kemPk);
-    const dh1 = await getSharedSecretX25519(ekKP.secretKey, peerId.dhPk);
-    const SK = await hkdfSHA256(concatBytes(new TextEncoder().encode('ECP-INIT-v1'), dh1, kemRes.sharedSecret), new Uint8Array(32), new TextEncoder().encode(''), 32);
+    const ekKP = keygenX25519();
+    const kemRes = encapsulateMLKEM1024(peerId.kemPk);
+    const dh1 = getSharedSecretX25519(ekKP.secretKey, peerId.dhPk);
+    const SK = hkdfSHA256(concatBytes(new TextEncoder().encode('ECP-INIT-v1'), dh1, kemRes.sharedSecret), new Uint8Array(32), new TextEncoder().encode(''), 32);
     const sigInput = concatBytes(new TextEncoder().encode('ECP-INIT-v1'), localPubBytes, peerPubBytes, ekKP.publicKey, kemRes.cipherText);
-    const sig = await signMLDSA87(sigInput, local.dsaSk);
-    const MK0 = await hkdfSHA256(SK, new Uint8Array(32), new TextEncoder().encode('ECP-INIT-MESSAGE-v1'), 32);
-    const aesKeyInit = await hkdfSHA256(MK0, new Uint8Array(32), new TextEncoder().encode('ECP-AES256GCM-v1'), 32);
-    const nonceInitBytes = await hmacSHA256(MK0, new TextEncoder().encode('ECP-INIT-NONCE'));
+    const sig = signMLDSA87(sigInput, local.dsaSk);
+    const MK0 = hkdfSHA256(SK, new Uint8Array(32), new TextEncoder().encode('ECP-INIT-MESSAGE-v1'), 32);
+    const aesKeyInit = hkdfSHA256(MK0, new Uint8Array(32), new TextEncoder().encode('ECP-AES256GCM-v1'), 32);
+    const nonceInitBytes = hmacSHA256(MK0, new TextEncoder().encode('ECP-INIT-NONCE'));
     const payloadFixed = concatBytes(localPubBytes, peerPubBytes, ekKP.publicKey, kemRes.cipherText, sig);
     const ptextEnc = new TextEncoder().encode(plaintextStr);
     const header = buildHeader(Config.PACKET_TYPES.INIT, payloadFixed.length + ptextEnc.length + 16);
     const aad = concatBytes(header, payloadFixed);
     let ciphertext;
     try {
-        ciphertext = await encryptGCM(aesKeyInit, nonceInitBytes.slice(0, 12), ptextEnc, aad);
+        ciphertext = encryptGCM(aesKeyInit, nonceInitBytes.slice(0, 12), ptextEnc, aad);
     }
     finally {
         aesKeyInit.fill(0);
@@ -37,14 +37,14 @@ export async function CreateInit(contactFp, plaintextStr) {
     }
     const fullPacket = concatBytes(header, payloadFixed, ciphertext);
     const cmp = memcmp(localPubBytes, peerPubBytes);
-    const convIdHash = await sha256(concatBytes(new TextEncoder().encode('ECP-CONVERSATION-v1'), cmp < 0 ? localPubBytes : peerPubBytes, cmp < 0 ? peerPubBytes : localPubBytes));
+    const convIdHash = sha256(concatBytes(new TextEncoder().encode('ECP-CONVERSATION-v1'), cmp < 0 ? localPubBytes : peerPubBytes, cmp < 0 ? peerPubBytes : localPubBytes));
     const session = {
         contactFp,
         version: 1,
         conversationID: encodeBase64URL(convIdHash.slice(0, 16)),
         peerIdentity: contact.bundle,
         DHs: { sk: ekKP.secretKey, pk: ekKP.publicKey },
-        RK: await hkdfSHA256(SK, new Uint8Array(32), new TextEncoder().encode('ECP-DR-ROOT-v1'), 32),
+        RK: hkdfSHA256(SK, new Uint8Array(32), new TextEncoder().encode('ECP-DR-ROOT-v1'), 32),
         Ns: 0,
         Nr: 0,
         PN: 0,
@@ -75,7 +75,7 @@ export async function ProcessInit(packetBytes) {
         throw new Error('Self-messaging prohibited: packet sent by local node.');
     const senderId = parseIdentityPublic(sIdBytes);
     const sigInput = concatBytes(new TextEncoder().encode('ECP-INIT-v1'), sIdBytes, rIdBytes, ekPubBytes, kemCt);
-    if (!(await verifyMLDSA87(sig, sigInput, senderId.dsaPk)))
+    if (!verifyMLDSA87(sig, sigInput, senderId.dsaPk))
         throw new Error('INIT signature rejected');
     let contact = await DB.get('contacts', senderFp);
     if (!contact) {
@@ -89,32 +89,32 @@ export async function ProcessInit(packetBytes) {
         };
         await DB.put('contacts', contact);
     }
-    const dh1 = await getSharedSecretX25519(local.dhSk, ekPubBytes);
-    const SK = await hkdfSHA256(concatBytes(new TextEncoder().encode('ECP-INIT-v1'), dh1, await decapsulateMLKEM1024(kemCt, local.kemSk)), new Uint8Array(32), new TextEncoder().encode(''), 32);
-    const MK0 = await hkdfSHA256(SK, new Uint8Array(32), new TextEncoder().encode('ECP-INIT-MESSAGE-v1'), 32);
-    const aesKeyInit = await hkdfSHA256(MK0, new Uint8Array(32), new TextEncoder().encode('ECP-AES256GCM-v1'), 32);
-    const nonceBytes = await hmacSHA256(MK0, new TextEncoder().encode('ECP-INIT-NONCE'));
+    const dh1 = getSharedSecretX25519(local.dhSk, ekPubBytes);
+    const SK = hkdfSHA256(concatBytes(new TextEncoder().encode('ECP-INIT-v1'), dh1, decapsulateMLKEM1024(kemCt, local.kemSk)), new Uint8Array(32), new TextEncoder().encode(''), 32);
+    const MK0 = hkdfSHA256(SK, new Uint8Array(32), new TextEncoder().encode('ECP-INIT-MESSAGE-v1'), 32);
+    const aesKeyInit = hkdfSHA256(MK0, new Uint8Array(32), new TextEncoder().encode('ECP-AES256GCM-v1'), 32);
+    const nonceBytes = hmacSHA256(MK0, new TextEncoder().encode('ECP-INIT-NONCE'));
     let ptextBytes;
     try {
-        ptextBytes = await decryptGCM(aesKeyInit, nonceBytes.slice(0, 12), ciphertext, concatBytes(headerBytes, packetBytes.slice(12, 12 + (4193 * 2 + 32 + 1568 + 4627))));
+        ptextBytes = decryptGCM(aesKeyInit, nonceBytes.slice(0, 12), ciphertext, concatBytes(headerBytes, packetBytes.slice(12, 12 + (4193 * 2 + 32 + 1568 + 4627))));
     }
     finally {
         aesKeyInit.fill(0);
         MK0.fill(0);
     }
-    const RK0 = await hkdfSHA256(SK, new Uint8Array(32), new TextEncoder().encode('ECP-DR-ROOT-v1'), 32);
-    const dhsKP = await keygenX25519();
+    const RK0 = hkdfSHA256(SK, new Uint8Array(32), new TextEncoder().encode('ECP-DR-ROOT-v1'), 32);
+    const dhsKP = keygenX25519();
     const dhsPubBytes = dhsKP.publicKey;
-    const dh2 = await getSharedSecretX25519(dhsKP.secretKey, ekPubBytes);
-    const drIkm = await hkdfSHA256(dh2, RK0, new TextEncoder().encode('ECP-DR-RK-v1'), 64);
+    const dh2 = getSharedSecretX25519(dhsKP.secretKey, ekPubBytes);
+    const drIkm = hkdfSHA256(dh2, RK0, new TextEncoder().encode('ECP-DR-RK-v1'), 64);
     const cmp = memcmp(localPubBytes, sIdBytes);
-    const convIdHash = await sha256(concatBytes(new TextEncoder().encode('ECP-CONVERSATION-v1'), cmp < 0 ? localPubBytes : sIdBytes, cmp < 0 ? sIdBytes : localPubBytes));
-    const respKey = await hkdfSHA256(SK, new Uint8Array(32), new TextEncoder().encode('ECP-RESP-v1'), 32);
-    const respNonce = await hmacSHA256(SK, new TextEncoder().encode('ECP-RESP-NONCE-v1'));
+    const convIdHash = sha256(concatBytes(new TextEncoder().encode('ECP-CONVERSATION-v1'), cmp < 0 ? localPubBytes : sIdBytes, cmp < 0 ? sIdBytes : localPubBytes));
+    const respKey = hkdfSHA256(SK, new Uint8Array(32), new TextEncoder().encode('ECP-RESP-v1'), 32);
+    const respNonce = hmacSHA256(SK, new TextEncoder().encode('ECP-RESP-NONCE-v1'));
     const respHdr = buildHeader(Config.PACKET_TYPES.RESP, 48);
     let respCt;
     try {
-        respCt = await encryptGCM(respKey, respNonce.slice(0, 12), dhsPubBytes, respHdr);
+        respCt = encryptGCM(respKey, respNonce.slice(0, 12), dhsPubBytes, respHdr);
     }
     finally {
         respKey.fill(0);
@@ -156,17 +156,17 @@ export async function ProcessResp(packetBytes) {
         return { alreadyEstablished: true, session };
     if (!session.SK)
         throw new Error('Handshake material purged');
-    const rKey = await hkdfSHA256(session.SK, new Uint8Array(32), new TextEncoder().encode('ECP-RESP-v1'), 32);
-    const rNonce = await hmacSHA256(session.SK, new TextEncoder().encode('ECP-RESP-NONCE-v1'));
+    const rKey = hkdfSHA256(session.SK, new Uint8Array(32), new TextEncoder().encode('ECP-RESP-v1'), 32);
+    const rNonce = hmacSHA256(session.SK, new TextEncoder().encode('ECP-RESP-NONCE-v1'));
     let rPubBytes;
     try {
-        rPubBytes = await decryptGCM(rKey, rNonce.slice(0, 12), packetBytes.slice(12), headerBytes);
+        rPubBytes = decryptGCM(rKey, rNonce.slice(0, 12), packetBytes.slice(12), headerBytes);
     }
     finally {
         rKey.fill(0);
     }
-    const dh2 = await getSharedSecretX25519(session.DHs.sk, rPubBytes);
-    const drIkm = await hkdfSHA256(dh2, session.RK, new TextEncoder().encode('ECP-DR-RK-v1'), 64);
+    const dh2 = getSharedSecretX25519(session.DHs.sk, rPubBytes);
+    const drIkm = hkdfSHA256(dh2, session.RK, new TextEncoder().encode('ECP-DR-RK-v1'), 64);
     const oldRK = session.RK;
     session.RK = drIkm.slice(0, 32);
     session.CKr = drIkm.slice(32, 64);
@@ -183,19 +183,19 @@ export async function ProcessResp(packetBytes) {
 }
 export async function stepDH(s, rPubBytes) {
     if (rPubBytes) {
-        const dh = await getSharedSecretX25519(s.DHs.sk, rPubBytes);
-        const drIkm = await hkdfSHA256(dh, s.RK, new TextEncoder().encode('ECP-DR-RK-v1'), 64);
+        const dh = getSharedSecretX25519(s.DHs.sk, rPubBytes);
+        const drIkm = hkdfSHA256(dh, s.RK, new TextEncoder().encode('ECP-DR-RK-v1'), 64);
         const oldRK = s.RK;
         s.RK = drIkm.slice(0, 32);
         s.CKr = drIkm.slice(32, 64);
         s.DHr = { pk: rPubBytes };
         oldRK.fill(0);
     }
-    const nkp = await keygenX25519();
+    const nkp = keygenX25519();
     if (!s.DHr)
         throw new Error('Cannot step DH: Remote DH key (DHr) is missing');
-    const dh2 = await getSharedSecretX25519(nkp.secretKey, s.DHr.pk);
-    const drIkm2 = await hkdfSHA256(dh2, s.RK, new TextEncoder().encode('ECP-DR-RK-v1'), 64);
+    const dh2 = getSharedSecretX25519(nkp.secretKey, s.DHr.pk);
+    const drIkm2 = hkdfSHA256(dh2, s.RK, new TextEncoder().encode('ECP-DR-RK-v1'), 64);
     const oldRK2 = s.RK;
     s.RK = drIkm2.slice(0, 32);
     s.CKs = drIkm2.slice(32, 64);
@@ -212,10 +212,10 @@ export async function EncryptMessage(session, plaintextStr) {
     if (!session.CKs)
         throw new Error('Failed to derive sending chain key (CKs)');
     const sendingCK = session.CKs;
-    const MK = await hmacSHA256(sendingCK, new Uint8Array([0x01]));
-    const CK_next = await hmacSHA256(sendingCK, new Uint8Array([0x02]));
-    const aesKey = await hkdfSHA256(MK, new Uint8Array(32), new TextEncoder().encode('ECP-AES256GCM-v1'), 32);
-    const nonce = await hmacSHA256(MK, new TextEncoder().encode('ECP-NONCE-v1'));
+    const MK = hmacSHA256(sendingCK, new Uint8Array([0x01]));
+    const CK_next = hmacSHA256(sendingCK, new Uint8Array([0x02]));
+    const aesKey = hkdfSHA256(MK, new Uint8Array(32), new TextEncoder().encode('ECP-AES256GCM-v1'), 32);
+    const nonce = hmacSHA256(MK, new TextEncoder().encode('ECP-NONCE-v1'));
     const cIdBytes = decodeBase64URL(session.conversationID);
     const lPubBytes = serializeIdentityPublic(await getLocalIdentity());
     const headerVals = new Uint8Array(8);
@@ -226,7 +226,7 @@ export async function EncryptMessage(session, plaintextStr) {
     const aad = concatBytes(new TextEncoder().encode('ECP-MSG-v1'), cIdBytes, lPubBytes, decodeBase64URL(session.peerIdentity), msgHdr);
     let ct;
     try {
-        ct = await encryptGCM(aesKey, nonce.slice(0, 12), new TextEncoder().encode(plaintextStr), aad);
+        ct = encryptGCM(aesKey, nonce.slice(0, 12), new TextEncoder().encode(plaintextStr), aad);
     }
     finally {
         aesKey.fill(0);
@@ -272,20 +272,20 @@ export async function DecryptMessage(packetBytes) {
         if (!session.CKr)
             throw new Error('CKr fault');
         const prevCKr = session.CKr;
-        session.CKr = await hmacSHA256(prevCKr, new Uint8Array([0x02]));
+        session.CKr = hmacSHA256(prevCKr, new Uint8Array([0x02]));
         prevCKr.fill(0);
         session.Nr++;
     }
     if (!session.CKr)
         throw new Error('Receiving chain key (CKr) unavailable');
     const receivingCK = session.CKr;
-    const MK = await hmacSHA256(receivingCK, new Uint8Array([0x01]));
-    const CK_next = await hmacSHA256(receivingCK, new Uint8Array([0x02]));
-    const aesKey = await hkdfSHA256(MK, new Uint8Array(32), new TextEncoder().encode('ECP-AES256GCM-v1'), 32);
-    const nonce = await hmacSHA256(MK, new TextEncoder().encode('ECP-NONCE-v1'));
+    const MK = hmacSHA256(receivingCK, new Uint8Array([0x01]));
+    const CK_next = hmacSHA256(receivingCK, new Uint8Array([0x02]));
+    const aesKey = hkdfSHA256(MK, new Uint8Array(32), new TextEncoder().encode('ECP-AES256GCM-v1'), 32);
+    const nonce = hmacSHA256(MK, new TextEncoder().encode('ECP-NONCE-v1'));
     let ptext;
     try {
-        ptext = await decryptGCM(aesKey, nonce.slice(0, 12), packetBytes.slice(offset), aad);
+        ptext = decryptGCM(aesKey, nonce.slice(0, 12), packetBytes.slice(offset), aad);
     }
     finally {
         aesKey.fill(0);

@@ -12,7 +12,7 @@
     "generate:sw": "node generate-sw.js",
     "serve": "serve",
     "dev": "npm-run-all -s vendor generate:sw -p tw:watch tsc:watch serve",
-    "build": "npm-run-all -s vendor generate:sw -p tw tsc"
+    "build": "npm-run-all -p tw tsc -s vendor generate:sw"
   },
   "dependencies": {
     "@noble/ciphers": "2",

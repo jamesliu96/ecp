@@ -279,7 +279,7 @@ UI.$('btn-add-contact').onclick = async () => {
         <button id="btn-confirm-add" class="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg min-h-11 cursor-pointer transition-colors shadow-sm">Save Peer</button>
       </div>
     `);
-        requestIdleCallback(() => UI.$('new-alias-input')?.focus());
+        setTimeout(() => UI.$('new-alias-input')?.focus());
         UI.$('btn-cancel-add').onclick = UI.closeModal;
         UI.$('btn-confirm-add').onclick = async () => {
             try {
@@ -405,7 +405,7 @@ UI.$('btn-rename-contact').onclick = async () => {
       <button id="btn-save" class="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg min-h-11 cursor-pointer transition-colors shadow-sm">Save</button>
     </div>
   `);
-    requestIdleCallback(() => {
+    setTimeout(() => {
         const input = UI.$('rename-val');
         if (input) {
             input.value = contact.name;

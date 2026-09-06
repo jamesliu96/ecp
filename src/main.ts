@@ -348,9 +348,7 @@ UI.$('btn-add-contact').onclick = async () => {
       </div>
     `);
 
-    requestIdleCallback(() =>
-      UI.$<HTMLInputElement>('new-alias-input')?.focus(),
-    );
+    setTimeout(() => UI.$<HTMLInputElement>('new-alias-input')?.focus());
 
     UI.$('btn-cancel-add').onclick = UI.closeModal;
     UI.$('btn-confirm-add').onclick = async () => {
@@ -486,7 +484,7 @@ UI.$('btn-rename-contact').onclick = async () => {
     </div>
   `);
 
-  requestIdleCallback(() => {
+  setTimeout(() => {
     const input = UI.$<HTMLInputElement>('rename-val');
     if (input) {
       input.value = contact.name;

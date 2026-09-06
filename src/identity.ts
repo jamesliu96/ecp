@@ -14,9 +14,9 @@ export const getLocalIdentity = async () => {
   let id = await DB.get<Identity>('identity', 'local');
 
   if (!id) {
-    const dsaKP = await keygenMLDSA87();
-    const dhKP = await keygenX25519();
-    const pqKP = await keygenMLKEM1024();
+    const dsaKP = keygenMLDSA87();
+    const dhKP = keygenX25519();
+    const pqKP = keygenMLKEM1024();
 
     id = {
       id: 'local',
@@ -54,7 +54,7 @@ export const parseIdentityPublic = (bytes: Uint8Array) => {
 export const calculateFingerprint = async (identityBytes: Uint8Array) => {
   const idPub = parseIdentityPublic(identityBytes);
   return encodeBase64URL(
-    await sha256(
+    sha256(
       concatBytes(
         new TextEncoder().encode('ECP-ID-v1'),
         idPub.dsaPk,
