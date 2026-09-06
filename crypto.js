@@ -23,21 +23,20 @@ export const randomUUID = () => {
         .join('');
     return `${bth(bytes.slice(0, 4))}-${bth(bytes.slice(4, 6))}-${bth(bytes.slice(6, 8))}-${bth(bytes.slice(8, 10))}-${bth(bytes.slice(10, 16))}`;
 };
-export const encodeBase64URL = (v) => ('toBase64' in v && typeof v.toBase64 === 'function'
-    ? v.toBase64()
-    : btoa(String.fromCharCode(...v)))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-export const decodeBase64URL = (v) => {
-    v = v.replace(/-/g, '+').replace(/_/g, '/');
-    while (v.length % 4)
-        v += '=';
-    return 'fromBase64' in Uint8Array &&
-        typeof Uint8Array.fromBase64 === 'function'
-        ? Uint8Array.fromBase64(v)
-        : Uint8Array.from(atob(v), (c) => c.charCodeAt(0));
-};
+export const encodeBase64URL = (v) => typeof v.toBase64 === 'function'
+    ? v.toBase64({ alphabet: 'base64url', omitPadding: true })
+    : btoa(v.reduce((acc, b) => acc + String.fromCharCode(b), ''))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+export const decodeBase64URL = (v) => typeof Uint8Array.fromBase64 === 'function'
+    ? Uint8Array.fromBase64(v, { alphabet: 'base64url' })
+    : Uint8Array.from(atob((() => {
+        let s = v.replace(/-/g, '+').replace(/_/g, '/');
+        while (s.length % 4)
+            s += '=';
+        return s;
+    })()), (c) => c.charCodeAt(0));
 export const concatBytes = (...items) => {
     const result = new Uint8Array(items.reduce((acc, { length }) => acc + length, 0));
     let offset = 0;

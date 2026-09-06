@@ -807,7 +807,7 @@ async function handleRoute() {
 
 addEventListener('hashchange', handleRoute);
 
-addEventListener('load', async () => {
+const initApp = async () => {
   try {
     await getLocalIdentity();
     await renderSidebar();
@@ -817,4 +817,8 @@ addEventListener('load', async () => {
     UI.showToast('Initialization Failed');
     console.error('[App] Boot failure:', err);
   }
-});
+};
+
+if (document.readyState === 'loading')
+  document.addEventListener('DOMContentLoaded', initApp);
+else initApp();

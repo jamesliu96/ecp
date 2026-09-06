@@ -1,35 +1,151 @@
 # E2EE Clipboard Protocol (ECP)
 
-A decentralized, pure-frontend web application for secure, peer-to-peer encrypted clipboard sharing and message communication. ECP operates entirely without a backend server, ensuring that all data processing and cryptographic operations are handled exclusively on the client side.
+A serverless, pure-frontend web implementation of the End-to-End Encrypted Clipboard Protocol (ECP). ECP enables secure, peer-to-peer encrypted messaging and clipboard content sharing across untrusted transport channels without requiring a backend server or central authority.
 
-## Core Architecture & Security
+## Core Architecture
 
-- **Decentralized Engine:** Functions completely without backend infrastructure, facilitating direct, secure message exchange between clients via out-of-band transport.
+- **Zero-Backend Processing:** Operates strictly on the client side. Messages are exchanged out-of-band via user-selected transport mediums (e.g., instant messengers, email, shared documents).
+- **Local Persistence:** Encrypted session states, keys, and identity profiles reside entirely within client-side `IndexedDB` storage.
+- **Post-Quantum Cryptography (PQC):** Combines classical cryptography with NIST PQC standards via `@noble` libraries (`@noble/ciphers`, `@noble/curves`, `@noble/hashes`, `@noble/post-quantum`).
+- **Zeroization & Memory Hygiene:** Ephemeral key material and unencrypted buffers undergo explicit zeroization immediately following cryptographic operations.
+- **Zero Tracking:** No telemetry, third-party network requests, or external assets.
 
-- **Local Persistence:** All application state and secure channel configurations are stored locally within the browser utilizing IndexedDB.
+## Threat Model & Security Boundaries
 
-- **Post-Quantum E2EE:** All plaintext is encrypted locally before being copied to the clipboard or transmitted, powered by the `@noble` cryptography suite (`@noble/ciphers`, `@noble/curves`, `@noble/hashes`, `@noble/post-quantum`), AES-256-GCM, X25519, ML-KEM-1024, ML-DSA-87, and Double Ratchet handshakes.
+### In-Scope Security Guarantees
 
-- **In-Browser Execution:** All cryptographic key generation, signing, and encryption execute strictly within the local web browser environment, alongside secure in-memory zeroization.
+- **Transport Confidentiality & Integrity:** All ciphertexts copied to the clipboard remain secure even when transmitted over unencrypted or compromised communication channels.
+- **Post-Quantum Forward Secrecy:** Future quantum adversaries capturing current transport payloads cannot decrypt historical sessions due to hybrid X25519/ML-KEM-1024 key encapsulation and Double Ratchet state advancement.
+- **Authenticity & Non-Repudiation:** Initial handshake signatures using ML-DSA-87 prevent active person-in-the-middle (PITM) identity spoofing.
 
-- **Zero-Knowledge & Privacy:** No user-generated data, cryptographic keys, or metadata are ever uploaded to a remote server, and the application contains zero third-party tracking.
+### Out-of-Scope Risks
+
+- **Host Environment Integrity:** Malware, malicious browser extensions, or OS-level keyloggers/clipboard monitors running on the user's host machine.
+- **Side-Channel Attacks:** Execution timing or memory access side-channels native to the JavaScript engine runtime environment.
 
 ## Usage Lifecycle
 
-1. **Identity Generation:** Upon first load, the application automatically generates a local cryptographic identity.
+1. **Identity Generation:** Automatically generates a persistent cryptographic identity upon initial application boot.
+2. **Peer Registration:** Users exchange out-of-band public identity bundles to add contacts.
+3. **Session Initialization:** The initiator generates an `INIT` payload packet and transmits it to the peer to establish a Double Ratchet session.
+4. **Encrypted Exchange:** Ciphertexts are copied directly to the clipboard, transmitted across any third-party app, and pasted by the recipient to decrypt.
 
-2. **Peer Registration:** Exchange public identity bundles out-of-band with a peer and add their bundle to establish a recognized contact.
+## Development & Build Pipeline
 
-3. **Channel Handshake:** Initiate a secure session by generating an initialization block and sharing it with the registered peer.
+The application is written in standard TypeScript and styled with Tailwind CSS v4. To maintain verifiable build outputs, the project intentionally omits complex bundlers in favor of explicit CLI toolchains (`tsc`, Tailwind CLI, and static serving).
 
-4. **Encrypted Exchange:** Copy the generated ciphertext blocks from the application and paste them into any external transport medium to communicate securely, and paste incoming ciphertext blocks back into the application to decrypt them.
+### Commands
 
-## Development Pipeline
+- **Installation:** Clone the repository and install locked dependencies.
 
-The application is built using TypeScript 7 and Tailwind CSS v4. No application bundler is used; the build pipeline consists purely of `tsc`, Tailwind CLI, and `serve`. Source files live under the `src/` directory, and build outputs are emitted directly to the project root to be served by any standard static-file web server.
+  ```sh
+  npm install
+  ```
 
-- **Installation:** Clone the repository and run `npm install` to install project dependencies.
+- **Local Development:** Starts the file watcher and static development server.
 
-- **Local Development:** Run `npm run dev` to start the full local development environment, including a static server and file watch modes.
+  ```sh
+  npm run dev
+  ```
 
-- **Production Build:** Run `npm run build` to compile static assets for production deployment.
+- **Production Build:** Compiles static JavaScript assets directly to root distribution files.
+
+  ```sh
+  npm run build
+  ```
+
+## ECP Protocol Specification (v1)
+
+### Cryptographic Primitive Stack
+
+| Role                         | Primitive   | Specification / Key Length                            |
+| ---------------------------- | ----------- | ----------------------------------------------------- |
+| **Classical Key Exchange**   | X25519      | 256-bit ECDH Curve                                    |
+| **Post-Quantum KEM**         | ML-KEM-1024 | FIPS 203 (1568-byte Public Key, 1568-byte Ciphertext) |
+| **Post-Quantum Signature**   | ML-DSA-87   | FIPS 204 (2592-byte Public Key, 4627-byte Signature)  |
+| **Symmetric Encryption**     | AES-256-GCM | 256-bit Key, 96-bit Initialization Vector (IV)        |
+| **Key Derivation & Hashing** | HKDF / HMAC | HMAC-SHA256 / HKDF-SHA256                             |
+| **Wire Encoding**            | Base64URL   | Prefixed by ASCII string `e2e1:`                      |
+
+### Framing & Packet Architecture
+
+All serialized wire payloads are subject to a **5 MB hard limit** and begin with a mandatory 12-byte binary header.
+
+#### Header Layout (12 Bytes Total)
+
+| Offset (Bytes)  | Field Name     | Type       | Description                                            |
+| --------------- | -------------- | ---------- | ------------------------------------------------------ |
+| `0x00` – `0x03` | Magic Bytes    | `Bytes[4]` | Constant ASCII `E2E1` (`0x45`, `0x32`, `0x45`, `0x31`) |
+| `0x04`          | Version        | `UInt8`    | Wire Protocol Version (`0x01`)                         |
+| `0x05`          | Packet Type    | `UInt8`    | `0x01`: INIT, `0x02`: RESP, `0x03`: MSG                |
+| `0x06` – `0x07` | Reserved       | `Bytes[2]` | Padding bytes for 32-bit alignment (`0x0000`)          |
+| `0x08` – `0x0B` | Payload Length | `UInt32BE` | Length of payload body in bytes (Big-Endian)           |
+
+### Identity Bundle Layout (4,193 Bytes Total)
+
+| Field Name                 | Offset (Bytes) | Size (Bytes) | Cryptographic Purpose               |
+| -------------------------- | -------------- | ------------ | ----------------------------------- |
+| **Bundle Version**         | `0`            | 1            | Format identifier (`0x01`)          |
+| **ML-DSA-87 Public Key**   | `1`            | 2,592        | Identity signature verification     |
+| **X25519 Public Key**      | `2593`         | 32           | Long-term classical static DH key   |
+| **ML-KEM-1024 Public Key** | `2625`         | 1,568        | Static PQC KEM encapsulation target |
+
+### Packet Types & Payload Specifications
+
+#### 1. INIT Packet Payload (`0x01`)
+
+Establishes the session, performs hybrid key agreement, and verifies mutual identity.
+
+| Component Field                     | Size (Bytes) | Description                                        |
+| ----------------------------------- | ------------ | -------------------------------------------------- |
+| **Sender Identity Bundle**          | 4,193        | Complete Identity Bundle of Initiator              |
+| **Receiver Identity Bundle**        | 4,193        | Complete Identity Bundle of Target Peer            |
+| **Ephemeral X25519 PK ($Ek_{pk}$)** | 32           | Ephemeral DH Public Key                            |
+| **ML-KEM Ciphertext ($KEM_{CT}$)**  | 1,568        | Encapsulated key against Receiver's ML-KEM PK      |
+| **ML-DSA Signature ($Sig$)**        | 4,627        | Signature over parameters verifying handshake      |
+| **Encrypted Initial Payload**       | Variable     | AES-256-GCM ciphertext containing setup parameters |
+
+#### 2. RESP Packet Payload (`0x02`)
+
+Acknowledges handshake initialization and confirms ratchet configuration.
+
+| Component Field       | Size (Bytes) | Description                                                                                  |
+| --------------------- | ------------ | -------------------------------------------------------------------------------------------- |
+| **Encrypted Payload** | 48           | AES-256-GCM payload containing Responder Ephemeral X25519 PK (32 bytes) + GCM Tag (16 bytes) |
+
+#### 3. MSG Packet Payload (`0x03`)
+
+Carries standard encrypted message and clipboard payloads within an active Double Ratchet session.
+
+| Header Offset (Bytes) | Field Name                   | Type / Size | Description                               |
+| --------------------- | ---------------------------- | ----------- | ----------------------------------------- |
+| `0` – `15`            | Conversation ID              | `Bytes[16]` | Pseudorandom session identifier           |
+| `16` – `47`           | Ephemeral DH Key             | `Bytes[32]` | Current ratchet step X25519 Public Key    |
+| `48` – `51`           | Previous Chain Length ($PN$) | `UInt32BE`  | Number of messages sent in previous chain |
+| `52` – `55`           | Message Sequence ($N_s$)     | `UInt32BE`  | Message count index in current chain      |
+| `56` +                | Payload Ciphertext           | Variable    | AES-256-GCM encrypted message body        |
+
+### Cryptographic Derivations & Formulas
+
+#### Hybrid Master Key Encapsulation (INIT Phase)
+
+The initial Shared Key ($SK$) combines classical ECDH key agreement with post-quantum key encapsulation using HKDF-SHA256:
+
+$$SK = \text{HKDF-SHA256}\left(\mathtt{"ECP-INIT-v1"} \parallel DH_1 \parallel KEM_{SS}\right)$$
+
+#### Initialization Signature
+
+Handshake integrity and authenticity are asserted by signing the concatenated parameter block using the sender's ML-DSA-87 private key:
+
+$$Sig = \text{Sign}_{\text{ML-DSA}}\left(\mathtt{"ECP-INIT-v1"} \parallel SenderID \parallel ReceiverID \parallel Ek_{pk} \parallel KEM_{CT}\right)$$
+
+#### Symmetric Double Ratchet Chains
+
+Chain Keys ($CK$) and Message Keys ($MK$) advance via HMAC-SHA256 step derivation:
+
+$$
+\begin{aligned}
+MK &= \text{HMAC-SHA256}(CK, \text{0x01}) \\
+CK_{\text{next}} &= \text{HMAC-SHA256}(CK, \text{0x02})
+\end{aligned}
+$$
