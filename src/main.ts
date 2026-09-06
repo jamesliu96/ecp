@@ -833,3 +833,11 @@ const initApp = async () => {
 if (document.readyState === 'loading')
   document.addEventListener('DOMContentLoaded', initApp);
 else initApp();
+
+declare global {
+  interface Window {
+    __showToast: typeof UI.showToast;
+  }
+}
+
+window.__showToast = UI.showToast;

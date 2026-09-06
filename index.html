@@ -408,8 +408,10 @@
               if (
                 newWorker.state === 'installed' &&
                 navigator.serviceWorker.controller
-              )
+              ) {
                 console.info('[ServiceWorker] New version available.');
+                window.__showToast?.('Update Available');
+              }
             });
           });
 
