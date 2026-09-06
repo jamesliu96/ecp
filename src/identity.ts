@@ -51,7 +51,7 @@ export const parseIdentityPublic = (bytes: Uint8Array) => {
   };
 };
 
-export const calculateFingerprint = async (identityBytes: Uint8Array) => {
+export const calculateFingerprint = (identityBytes: Uint8Array) => {
   const idPub = parseIdentityPublic(identityBytes);
   return encodeBase64URL(
     sha256(
@@ -66,4 +66,4 @@ export const calculateFingerprint = async (identityBytes: Uint8Array) => {
 };
 
 export const getLocalFingerprint = async () =>
-  await calculateFingerprint(serializeIdentityPublic(await getLocalIdentity()));
+  calculateFingerprint(serializeIdentityPublic(await getLocalIdentity()));

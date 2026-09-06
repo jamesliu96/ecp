@@ -100,7 +100,7 @@ async function handleOutgoing(packetBase64: string, bundleBase64?: string) {
 
 async function renderSidebar() {
   const local = await getLocalIdentity();
-  UI.$('my-fingerprint').textContent = await calculateFingerprint(
+  UI.$('my-fingerprint').textContent = calculateFingerprint(
     serializeIdentityPublic(local),
   );
 
@@ -330,7 +330,7 @@ UI.$('btn-add-contact').onclick = async () => {
     const bytes = parseEnvelope(text);
     if (bytes[0] !== Config.IDENTITY_VERSION) throw new Error('Invalid format');
 
-    const fp = await calculateFingerprint(bytes);
+    const fp = calculateFingerprint(bytes);
     const localFp = await getLocalFingerprint();
     if (fp === localFp) return UI.showToast('Cannot Link Own Identity');
     if (await DB.get('contacts', fp))
@@ -730,7 +730,7 @@ async function showPeerMetadata(contactFp: string) {
 
   let bundleHashText = 'N/A';
   if (contact?.bundle)
-    bundleHashText = `${(await calculateFingerprint(decodeBase64URL(contact.bundle))).substring(0, 16)}...`;
+    bundleHashText = `${calculateFingerprint(decodeBase64URL(contact.bundle)).substring(0, 16)}...`;
 
   UI.$('metadata-title').textContent = 'Peer Diagnostics';
   UI.$('metadata-content').innerHTML = `

@@ -160,7 +160,7 @@ export async function ProcessInit(packetBytes: Uint8Array) {
 
   if (memcmp(rIdBytes, localPubBytes)) throw new Error('INIT dest misrouted');
 
-  const senderFp = await calculateFingerprint(sIdBytes);
+  const senderFp = calculateFingerprint(sIdBytes);
   const localFp = await getLocalFingerprint();
   if (senderFp === localFp)
     throw new Error('Self-messaging prohibited: packet sent by local node.');
@@ -365,7 +365,7 @@ export async function ProcessResp(packetBytes: Uint8Array) {
   return { alreadyEstablished: false, session };
 }
 
-export async function stepDH(s: ChannelSession, rPubBytes?: Uint8Array) {
+export function stepDH(s: ChannelSession, rPubBytes?: Uint8Array) {
   if (rPubBytes) {
     const dh = getSharedSecretX25519(s.DHs.sk, rPubBytes);
     const drIkm = hkdfSHA256(
@@ -406,7 +406,7 @@ export async function EncryptMessage(
 ) {
   if (session.state !== 'ESTABLISHED')
     throw new Error('Channel constraint violation');
-  if (!session.CKs) await stepDH(session);
+  if (!session.CKs) stepDH(session);
   if (!session.CKs) throw new Error('Failed to derive sending chain key (CKs)');
 
   const sendingCK = session.CKs;
@@ -500,7 +500,7 @@ export async function DecryptMessage(packetBytes: Uint8Array) {
     session.PN = session.Ns;
     session.Ns = 0;
     session.Nr = 0;
-    await stepDH(session, dhPubBytes);
+    stepDH(session, dhPubBytes);
   }
 
   if (n < session.Nr) throw new Error('Message frame out of order or replayed');
