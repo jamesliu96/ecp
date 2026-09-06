@@ -30,12 +30,12 @@ const State = {
 
 const UI = {
   $: <T extends HTMLElement>(id: string): T => {
-    const el = document.getElementById(id);
+    const el = document.getElementById(id) ?? document.querySelector(id);
     if (!el) throw new Error(`Element #${id} not found in DOM`);
     return el as T;
   },
   toastTimer: undefined as number | undefined,
-  showToast: (msg: string) => {
+  showToast: (msg: string, duration = 3500) => {
     const t = UI.$('toast');
     UI.$('toast-msg').textContent = msg;
     t.classList.remove('opacity-0', 'pointer-events-none');
@@ -44,7 +44,7 @@ const UI = {
     UI.toastTimer = setTimeout(() => {
       t.classList.remove('opacity-100');
       t.classList.add('opacity-0', 'pointer-events-none');
-    }, 3500);
+    }, duration);
   },
   showModal: (containerHtml: string) => {
     UI.$('modal-container').innerHTML = containerHtml;
@@ -737,9 +737,17 @@ async function showPeerMetadata(contactFp: string) {
     <div><strong>Peer FP:</strong> <span id="meta-fp"></span></div>
     <div><strong>Bundle Hash:</strong> <span id="meta-hash"></span></div>
     <hr class="border-slate-800 my-2" />
-    <div><strong>FSM State:</strong> <span id="meta-state" class="${stateColor}"></span></div>
-    ${session ? `<div><strong>Conv ID Hash:</strong> <span id="meta-cid"></span></div><div><strong>Ns (Tx Chain):</strong> <span id="meta-ns"></span></div><div><strong>Nr (Rx Chain):</strong> <span id="meta-nr"></span></div><div><strong>Persisted:</strong> <span id="meta-persisted"></span></div>` : ''}
-    <div class="mt-4 text-[9px] text-slate-500 italic">* Symmetric key material omitted for safety measures</div>
+    <div><strong>Double Ratchet State:</strong> <span id="meta-state" class="${stateColor}"></span></div>
+    ${
+      session
+        ? `<div><strong>Conversation ID:</strong> <span id="meta-cid"></span></div>
+    <div><strong>Message Sequence (Ns):</strong> <span id="meta-ns"></span></div>
+    <div><strong>Receive Sequence (Nr):</strong> <span id="meta-nr"></span></div>
+    <div><strong>Previous Chain Length (PN):</strong> <span id="meta-pn"></span></div>
+    <div><strong>Persisted:</strong> <span id="meta-persisted"></span></div>`
+        : ''
+    }
+    <div class="mt-4 text-[9px] text-slate-500 italic">* Ephemeral key material zeroized for memory hygiene</div>
   `;
 
   UI.$('meta-fp').textContent = contact?.fingerprint || 'Unknown';
@@ -750,6 +758,7 @@ async function showPeerMetadata(contactFp: string) {
     UI.$('meta-cid').textContent = session.conversationID.substring(0, 16);
     UI.$('meta-ns').textContent = session.Ns.toString();
     UI.$('meta-nr').textContent = session.Nr.toString();
+    UI.$('meta-pn').textContent = session.PN.toString();
     UI.$('meta-persisted').textContent = Settings.get().persistHandshakes
       ? 'IndexedDB'
       : 'Volatile';
@@ -764,18 +773,22 @@ function showMessageMetadata(msg: MessageData) {
   UI.$('metadata-content').innerHTML = `
     <div><strong>Frame ID:</strong> <span id="meta-frame"></span></div>
     <div><strong>Vector:</strong> <span id="meta-vector"></span></div>
-    <div><strong>Timestamp:</strong> <span id="meta-ts"></span></div>
+    <div><strong>Timestamp:</strong> <span id="meta-ts"></span> <small>(<span id="meta-ts-local"></span>)</small></div>
     <hr class="border-slate-800 my-2" />
-    <div><strong>Cipher:</strong> AES-256-GCM</div>
-    <div><strong>DHE:</strong> X25519</div>
-    <div><strong>Quantum Security:</strong> ML-KEM-1024 + ML-DSA-87</div>
+    <div><strong>Symmetric Encryption:</strong> AES-256-GCM</div>
+    <div><strong>Classical Key Exchange:</strong> X25519</div>
+    <div><strong>Post-Quantum KEM:</strong> ML-KEM-1024</div>
+    <div><strong>Post-Quantum Signature:</strong> ML-DSA-87</div>
+    <div><strong>Key Derivation & Hashing:</strong> HKDF-SHA256 / HMAC-SHA256</div>
   `;
 
   UI.$('meta-frame').textContent = msg.messageId;
   UI.$('meta-vector').textContent = msg.isMe
     ? 'Egress (Local)'
     : 'Ingress (Remote)';
-  UI.$('meta-ts').textContent = new Date(msg.timestamp).toISOString();
+  const ts = new Date(msg.timestamp);
+  UI.$('meta-ts').textContent = ts.toISOString();
+  UI.$('meta-ts-local').textContent = ts.toLocaleString();
   UI.$('metadata-overlay').classList.remove('hidden');
   UI.$('metadata-overlay').classList.add('flex');
 }
@@ -820,3 +833,31 @@ const initApp = async () => {
 if (document.readyState === 'loading')
   document.addEventListener('DOMContentLoaded', initApp);
 else initApp();
+
+addEventListener('load', async () => {
+  try {
+    const registration = await navigator.serviceWorker.register('/sw.js');
+    console.info('[ServiceWorker] Registration complete.');
+
+    registration.addEventListener('updatefound', () => {
+      const newWorker = registration.installing;
+      if (!newWorker) return;
+
+      newWorker.addEventListener('statechange', () => {
+        if (
+          newWorker.state === 'installed' &&
+          navigator.serviceWorker.controller
+        ) {
+          console.info('[ServiceWorker] New version available.');
+          UI.showToast('Update Available');
+        }
+      });
+    });
+
+    setInterval(() => {
+      registration.update();
+    }, 60000);
+  } catch (err) {
+    console.error('[ServiceWorker] Registration failed:', err);
+  }
+});

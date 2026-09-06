@@ -394,13 +394,5 @@
       }
     </script>
     <script type="module" src="/main.js"></script>
-    <script>
-      addEventListener('load', () => {
-        navigator.serviceWorker
-          .register('/sw.js')
-          .then(console.log)
-          .catch(console.error);
-      });
-    </script>
   </body>
 </html>
