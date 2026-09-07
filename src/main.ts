@@ -265,7 +265,6 @@ async function renderChatLog() {
   const frag = document.createDocumentFragment();
 
   for (const m of chatMsgs) {
-    if (query && !m.text.toLowerCase().includes(query)) continue;
     const div = document.createElement('div');
     div.className = `max-w-[85%] sm:max-w-[75%] p-3.5 rounded-2xl text-sm break-words shadow-sm border transition-all ${
       m.isMe
@@ -273,7 +272,24 @@ async function renderChatLog() {
         : 'bg-slate-900 border-slate-800 self-start rounded-bl-xs text-slate-200'
     }`;
 
-    if (query) {
+    if (m.text.startsWith('data:image/')) {
+      const img = document.createElement('img');
+      img.src = m.text;
+      img.className = 'max-w-full max-h-80 rounded-lg object-contain my-1';
+      div.appendChild(img);
+    } else if (m.text.startsWith('data:video/')) {
+      const vid = document.createElement('video');
+      vid.src = m.text;
+      vid.controls = true;
+      vid.className = 'max-w-full max-h-80 rounded-lg object-contain my-1';
+      div.appendChild(vid);
+    } else if (m.text.startsWith('data:audio/')) {
+      const aud = document.createElement('audio');
+      aud.src = m.text;
+      aud.controls = true;
+      aud.className = 'max-w-full my-1';
+      div.appendChild(aud);
+    } else if (query) {
       const regex = new RegExp(
         `(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`,
         'gi',
@@ -307,6 +323,44 @@ async function renderChatLog() {
   if (isNearBottom || lastMsg?.isMe)
     requestAnimationFrame(() => (ctn.scrollTop = ctn.scrollHeight));
 }
+
+UI.$('btn-attach').onclick = () => UI.$('media-input').click();
+
+UI.$<HTMLInputElement>('media-input').onchange = (e) => {
+  const file = (e.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (re) => {
+    UI.$<HTMLInputElement>('chat-input').value = re.target?.result as string;
+    UI.$<HTMLFormElement>('chat-form').dispatchEvent(new Event('submit'));
+    UI.$<HTMLInputElement>('media-input').value = '';
+  };
+  reader.readAsDataURL(file);
+};
+
+UI.$<HTMLInputElement>('chat-input').addEventListener('paste', (e) => {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (const item of items) {
+    if (
+      item.type.startsWith('image/') ||
+      item.type.startsWith('video/') ||
+      item.type.startsWith('audio/')
+    ) {
+      e.preventDefault();
+      const file = item.getAsFile();
+      if (!file) continue;
+      const reader = new FileReader();
+      reader.onload = (re) => {
+        UI.$<HTMLInputElement>('chat-input').value = re.target
+          ?.result as string;
+        UI.$<HTMLFormElement>('chat-form').dispatchEvent(new Event('submit'));
+      };
+      reader.readAsDataURL(file);
+      break;
+    }
+  }
+});
 
 UI.$('btn-back-mobile').onclick = () => {
   resetChatView(true);
@@ -784,8 +838,8 @@ function showMessageMetadata(msg: Message) {
     <hr class="border-slate-800 my-2" />
     <div><strong>Symmetric Encryption:</strong> AES-256-GCM</div>
     <div><strong>Classical Key Exchange:</strong> X25519</div>
-    <div><strong>Post-Quantum KEM:</strong> ML-KEM-1024</div>
-    <div><strong>Post-Quantum Signature:</strong> ML-DSA-87</div>
+    <div><strong>Post-Quantum KEM:</strong> ML-KEM-768</div>
+    <div><strong>Post-Quantum Signature:</strong> ML-DSA-65</div>
     <div><strong>Key Derivation & Hashing:</strong> HKDF-SHA256 / HMAC-SHA256</div>
   `;
 

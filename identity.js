@@ -1,12 +1,12 @@
 import { Config } from './config.js';
-import { concatBytes, keygenMLDSA87, keygenMLKEM1024, keygenX25519, sha256, encodeBase64URL, } from './crypto.js';
+import { concatBytes, keygenMLDSA65, keygenMLKEM768, keygenX25519, sha256, encodeBase64URL, } from './crypto.js';
 import { DB } from './storage.js';
 export const getLocalIdentity = async () => {
     let id = await DB.get('identity', 'local');
     if (!id) {
-        const dsaKP = keygenMLDSA87();
+        const dsaKP = keygenMLDSA65();
         const dhKP = keygenX25519();
-        const pqKP = keygenMLKEM1024();
+        const pqKP = keygenMLKEM768();
         id = {
             id: 'local',
             dsaSk: dsaKP.secretKey,
@@ -22,14 +22,14 @@ export const getLocalIdentity = async () => {
 };
 export const serializeIdentityPublic = (id) => concatBytes(new Uint8Array([Config.IDENTITY_VERSION]), id.dsaPk, id.dhPk, id.kemPk);
 export const parseIdentityPublic = (bytes) => {
-    if (bytes.length < 4193)
+    if (bytes.length < 3169)
         throw new Error('Identity packet malformed');
     if (bytes[0] !== Config.IDENTITY_VERSION)
         throw new Error('Unsupported identity version');
     return {
-        dsaPk: bytes.slice(1, 2593),
-        dhPk: bytes.slice(2593, 2625),
-        kemPk: bytes.slice(2625, 4193),
+        dsaPk: bytes.slice(1, 1953),
+        dhPk: bytes.slice(1953, 1985),
+        kemPk: bytes.slice(1985, 3169),
     };
 };
 export const calculateFingerprint = (identityBytes) => {

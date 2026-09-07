@@ -1,8 +1,8 @@
 import { Config } from './config.js';
 import {
   concatBytes,
-  keygenMLDSA87,
-  keygenMLKEM1024,
+  keygenMLDSA65,
+  keygenMLKEM768,
   keygenX25519,
   sha256,
   encodeBase64URL,
@@ -14,9 +14,9 @@ export const getLocalIdentity = async () => {
   let id = await DB.get('identity', 'local');
 
   if (!id) {
-    const dsaKP = keygenMLDSA87();
+    const dsaKP = keygenMLDSA65();
     const dhKP = keygenX25519();
-    const pqKP = keygenMLKEM1024();
+    const pqKP = keygenMLKEM768();
 
     id = {
       id: 'local',
@@ -41,13 +41,13 @@ export const serializeIdentityPublic = (id: Identity) =>
   );
 
 export const parseIdentityPublic = (bytes: Uint8Array) => {
-  if (bytes.length < 4193) throw new Error('Identity packet malformed');
+  if (bytes.length < 3169) throw new Error('Identity packet malformed');
   if (bytes[0] !== Config.IDENTITY_VERSION)
     throw new Error('Unsupported identity version');
   return {
-    dsaPk: bytes.slice(1, 2593),
-    dhPk: bytes.slice(2593, 2625),
-    kemPk: bytes.slice(2625, 4193),
+    dsaPk: bytes.slice(1, 1953),
+    dhPk: bytes.slice(1953, 1985),
+    kemPk: bytes.slice(1985, 3169),
   };
 };
 
