@@ -37,21 +37,21 @@ The application is written in standard TypeScript and styled with Tailwind CSS v
 
 - **Installation:** Clone the repository and install locked dependencies.
 
-```sh
-npm install
-```
+  ```sh
+  npm install
+  ```
 
 - **Local Development:** Starts the file watcher and static development server.
 
-```sh
-npm run dev
-```
+  ```sh
+  npm run dev
+  ```
 
 - **Production Build:** Compiles static JavaScript assets directly to root distribution files.
 
-```sh
-npm run build
-```
+  ```sh
+  npm run build
+  ```
 
 ## ECP Protocol Specification (v1)
 
