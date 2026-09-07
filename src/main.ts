@@ -57,11 +57,11 @@ const UI = {
   },
 };
 
-UI.$('modal-overlay').onclick = (e) => {
+UI.$('modal-overlay').onclick = () => {
   UI.closeModal();
 };
 
-const requestIdleCallback = window.requestIdleCallback ?? setTimeout;
+const nextTick = window.requestIdleCallback ?? setTimeout;
 
 const closePeerDropdown = () => UI.$('peer-dropdown').classList.add('hidden');
 
@@ -305,9 +305,7 @@ async function renderChatLog() {
           div.appendChild(document.createTextNode(part));
         }
       }
-    } else {
-      div.textContent = m.text;
-    }
+    } else div.textContent = m.text;
 
     div.oncontextmenu = (e) => {
       e.preventDefault();
@@ -403,7 +401,7 @@ UI.$('btn-add-contact').onclick = async () => {
       </div>
     `);
 
-    requestIdleCallback(() => {
+    nextTick(() => {
       const input = UI.$<HTMLInputElement>('new-alias-input');
       if (input) {
         input.focus();
@@ -549,7 +547,7 @@ UI.$('btn-rename-contact').onclick = async () => {
     </div>
   `);
 
-  requestIdleCallback(() => {
+  nextTick(() => {
     const input = UI.$<HTMLInputElement>('rename-val');
     if (input) {
       input.value = contact.name;
