@@ -41,7 +41,7 @@ const UI = {
 UI.$('modal-overlay').onclick = () => {
     UI.closeModal();
 };
-const nextTick = window.requestIdleCallback ?? setTimeout;
+const nextTick = 'requestIdleCallback' in globalThis ? requestIdleCallback : setTimeout;
 const closePeerDropdown = () => UI.$('peer-dropdown').classList.add('hidden');
 function resetChatView(updateHash = true) {
     delete State.currentContactFp;
