@@ -35,19 +35,19 @@ The application is written in standard TypeScript and styled with Tailwind CSS v
 
 ### Commands
 
-- **Installation:** Clone the repository and install locked dependencies.
+- **Installation:** Clone the repository and install locked dependencies:
 
   ```sh
   npm install
   ```
 
-- **Local Development:** Starts the file watcher and static development server.
+- **Local Development:** Start the file watcher and static development server:
 
   ```sh
   npm run dev
   ```
 
-- **Production Build:** Compiles static JavaScript assets directly to root distribution files.
+- **Production Build:** Compile static JavaScript assets directly to root distribution files:
 
   ```sh
   npm run build
@@ -81,11 +81,11 @@ All serialized wire payloads enforce a 50 MB limit and begin with a mandatory 12
 
 ### Identity Bundle Layout (4,225 Bytes Total)
 
-| Field Name                                    | Offset (Bytes) | Size (Bytes) | Cryptographic Purpose                                    |
-| --------------------------------------------- | -------------- | ------------ | -------------------------------------------------------- |
-| **Bundle Version**                            | `0`            | 1            | Format identifier (`0x01`)                               |
-| **Hybrid Signature PK (Ed25519 + ML-DSA-87)** | `1`            | 2,624        | Ed25519 (32B) + ML-DSA-87 (2,592B) identity verification |
-| **Composite KEM PK (X25519 + ML-KEM-1024)**   | `2625`         | 1,600        | X25519 (32B) + ML-KEM-1024 (1,568B) encapsulation target |
+| Field Name                                       | Offset (Bytes) | Size (Bytes) | Cryptographic Purpose                                    |
+| ------------------------------------------------ | -------------- | ------------ | -------------------------------------------------------- |
+| **Bundle Version**                               | `0`            | 1            | Format identifier (`0x01`)                               |
+| **Composite Signature PK (Ed25519 + ML-DSA-87)** | `1`            | 2,624        | Ed25519 (32B) + ML-DSA-87 (2,592B) identity verification |
+| **Hybrid KEM PK (X25519 + ML-KEM-1024)**         | `2625`         | 1,600        | X25519 (32B) + ML-KEM-1024 (1,568B) encapsulation target |
 
 ### Packet Types & Payload Specifications
 
@@ -139,12 +139,17 @@ $$SK = \text{HKDF-SHA256}\left(\mathtt{"ECP-INIT-v1"} \parallel DH_1 \parallel K
 
 #### Composite Initialization Signature
 
-Handshake integrity and authenticity are asserted by signing the concatenated parameter block using the sender's composite ECDSA + ML-DSA-87 private keys:
+Handshake integrity and authenticity are asserted by signing the concatenated parameter block using the sender's composite Ed25519 + ML-DSA-87 private keys:
 
-$$Sig = \text{Sign}_{\text{Composite-ECDSA+ML-DSA}}\left(\mathtt{"ECP-INIT-v1"} \parallel SenderID \parallel ReceiverID \parallel Ek_{pk} \parallel KEM_{CT}\right)$$
+$$Sig = \text{Sign}_{\text{Ed25519+ML-DSA-87}}\left(\mathtt{"ECP-INIT-v1"} \parallel SenderID \parallel ReceiverID \parallel Ek_{pk} \parallel KEM_{CT}\right)$$
 
 #### Symmetric Double Ratchet Chains
 
 Chain Keys ($CK$) and Message Keys ($MK$) advance via HMAC-SHA256 step derivation:
 
-$$\begin{aligned} MK &= \text{HMAC-SHA256}(CK, \text{0x01}) \\ CK_{\text{next}} &= \text{HMAC-SHA256}(CK, \text{0x02}) \end{aligned}$$
+$$
+\begin{aligned}
+MK &= \text{HMAC-SHA256}(CK, \text{0x01}) \\
+CK_{\text{next}} &= \text{HMAC-SHA256}(CK, \text{0x02})
+\end{aligned}
+$$
