@@ -132,6 +132,20 @@ export const DB = (() => {
                 req.onerror = () => reject(req.error);
             });
         },
+        getAllByIndex: async (storeName, indexName, indexValue) => {
+            if (storeName === 'sessions' && !Settings.get().persistHandshakes)
+                return Array.from(memorySessions.values()).filter((session) => session[indexName] === indexValue);
+            const db = await getDB();
+            return new Promise((resolve, reject) => {
+                const req = db
+                    .transaction(storeName, 'readonly')
+                    .objectStore(storeName)
+                    .index(indexName)
+                    .getAll(indexValue);
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+        },
     };
 })();
 //# sourceMappingURL=storage.js.map

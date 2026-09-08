@@ -20,14 +20,17 @@ export const randomUUID = () => {
     const bytes = getRandomBytes(16);
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    const bth = (arr) => Array.from(arr)
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('');
-    return `${bth(bytes.slice(0, 4))}-${bth(bytes.slice(4, 6))}-${bth(bytes.slice(6, 8))}-${bth(bytes.slice(8, 10))}-${bth(bytes.slice(10, 16))}`;
+    const bth = (arr) => Array.from(arr, (b) => b.toString(16).padStart(2, '0')).join('');
+    return `${bth(bytes.subarray(0, 4))}-${bth(bytes.subarray(4, 6))}-${bth(bytes.subarray(6, 8))}-${bth(bytes.subarray(8, 10))}-${bth(bytes.subarray(10, 16))}`;
 };
 export const encodeBase64URL = (v) => typeof v.toBase64 === 'function'
     ? v.toBase64({ alphabet: 'base64url', omitPadding: true })
-    : btoa(v.reduce((acc, b) => acc + String.fromCharCode(b), ''))
+    : btoa((() => {
+        let s = '';
+        for (let i = 0; i < v.length; i += 32768)
+            s += String.fromCharCode.apply(null, Array.from(v.subarray(i, i + 32768)));
+        return s;
+    })())
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
         .replace(/=+$/, '');
@@ -69,15 +72,11 @@ export const hkdfSHA256 = (ikm, salt, info, length) => hkdf(sha256, ikm, salt, i
 export const encryptGCM = (key, nonce, plaintext, aad) => gcm(key, nonce, aad).encrypt(plaintext);
 export const decryptGCM = (key, nonce, ciphertext, aad) => gcm(key, nonce, aad).decrypt(ciphertext);
 export const keygenEd25519 = ed25519.keygen;
-const signEd25519 = ed25519.sign;
-const verifyEd25519 = ed25519.verify;
 export const keygenMLDSA87 = ml_dsa87.keygen;
-const signMLDSA87 = ml_dsa87.sign;
-const verifyMLDSA87 = ml_dsa87.verify;
-export const signComposite = (message, ecSk, dsaSk) => concatBytes(signEd25519(message, ecSk), signMLDSA87(message, dsaSk));
+export const signComposite = (message, ecSk, dsaSk) => concatBytes(ed25519.sign(message, ecSk), ml_dsa87.sign(dsaSk, message));
 export const verifyComposite = (sig, message, ecPk, dsaPk) => sig.length >= 4691 &&
-    verifyEd25519(sig.slice(0, 64), message, ecPk) &&
-    verifyMLDSA87(sig.slice(64, 4691), message, dsaPk);
+    ed25519.verify(sig.subarray(0, 64), message, ecPk) &&
+    ml_dsa87.verify(sig.subarray(64, 4691), message, dsaPk);
 export const keygenX25519 = x25519.keygen;
 export const getSharedSecretX25519 = x25519.getSharedSecret;
 export const keygenMLKEM1024 = ml_kem1024.keygen;

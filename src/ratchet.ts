@@ -155,7 +155,6 @@ export async function ProcessInit(packetBytes: Uint8Array) {
   const { headerBytes } = parseHeader(packetBytes);
 
   let offset = 12;
-  // Fixed payload = 4225 (sId) + 4225 (rId) + 32 (ek) + 1568 (kemCt) + 4691 (sig) = 14741
   const fixedPayloadLen = 4225 * 2 + 32 + 1568 + 4691;
   if (packetBytes.length < 12 + fixedPayloadLen + 16)
     throw new Error('INIT structural integrity fail');

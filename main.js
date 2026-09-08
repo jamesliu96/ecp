@@ -73,7 +73,6 @@ async function renderSidebar() {
     let contacts = await DB.getAll('contacts');
     if (!State.showArchived)
         contacts = contacts.filter((c) => !c.archived);
-    const msgs = await DB.getAll('messages');
     const sessions = await DB.getAll('sessions');
     const frag = document.createDocumentFragment();
     for (const c of contacts) {
@@ -85,10 +84,10 @@ async function renderSidebar() {
         let unreadCount = 0;
         if (!isActive) {
             const session = sessions.find((s) => s.contactFp === c.fingerprint);
-            if (session)
-                unreadCount = msgs.filter((m) => m.conversationId === session.conversationId &&
-                    !m.isMe &&
-                    m.timestamp > c.lastReadTimestamp).length;
+            if (session) {
+                const chatMsgs = await DB.getAllByIndex('messages', 'conversationId', session.conversationId);
+                unreadCount = chatMsgs.filter((m) => !m.isMe && m.timestamp > c.lastReadTimestamp).length;
+            }
         }
         const topRow = document.createElement('div');
         topRow.className = 'flex justify-between items-center gap-2';
@@ -168,12 +167,11 @@ async function renderChatLog() {
     if (!State.currentContactFp)
         return;
     const currentSeq = ++renderSeq;
-    const msgs = await DB.getAll('messages');
     const sessions = await DB.getAll('sessions');
+    const session = sessions.find((s) => s.contactFp === State.currentContactFp);
     if (currentSeq !== renderSeq)
         return;
-    const session = sessions.find((s) => s.contactFp === State.currentContactFp);
-    if (session) {
+    if (session)
         if (session.state === 'HANDSHAKE_SENT' ||
             session.state === 'HANDSHAKE_RECEIVED') {
             UI.$('#chat-status-text').textContent =
@@ -190,16 +188,16 @@ async function renderChatLog() {
                 'w-2 h-2 rounded-full bg-emerald-400';
             UI.$('#chat-input').disabled = UI.$('#media-input').disabled = false;
         }
-    }
     else {
         UI.$('#chat-status-text').textContent = 'Idle';
         UI.$('#chat-status-dot').className = 'w-2 h-2 rounded-full bg-slate-500';
         UI.$('#chat-input').disabled = UI.$('#media-input').disabled = false;
     }
     const query = State.searchQuery.toLowerCase();
-    const chatMsgs = msgs
-        .filter((m) => session && m.conversationId === session.conversationId)
-        .sort((a, b) => a.timestamp === b.timestamp
+    const allChatMsgs = session
+        ? await DB.getAllByIndex('messages', 'conversationId', session.conversationId)
+        : [];
+    const chatMsgs = allChatMsgs.sort((a, b) => a.timestamp === b.timestamp
         ? a.id.localeCompare(b.id)
         : a.timestamp - b.timestamp);
     const ctn = UI.$('#chat-messages');
@@ -259,14 +257,66 @@ async function renderChatLog() {
         requestAnimationFrame(() => (ctn.scrollTop = ctn.scrollHeight));
 }
 UI.$('#btn-attach').onclick = () => UI.$('#media-input').click();
+let pendingMediaText = '';
+const submitChatMessage = async () => {
+    if (isSending)
+        return;
+    const input = UI.$('#chat-input');
+    const text = pendingMediaText || input.value.trim();
+    pendingMediaText = '';
+    if (!text || !State.currentContactFp)
+        return;
+    isSending = true;
+    input.disabled = true;
+    try {
+        const sessions = await DB.getAll('sessions');
+        const session = sessions.find((s) => s.contactFp === State.currentContactFp);
+        if (!session) {
+            const { packet, session: newSession } = await CreateInit(State.currentContactFp, text);
+            await DB.put('messages', {
+                id: randomUUID(),
+                conversationId: newSession.conversationId,
+                isMe: true,
+                text,
+                timestamp: Date.now(),
+            });
+            await handleOutgoing(encodeBase64URL(packet));
+        }
+        else {
+            const packet = await EncryptMessage(session, text);
+            await DB.put('messages', {
+                id: randomUUID(),
+                conversationId: session.conversationId,
+                isMe: true,
+                text,
+                timestamp: Date.now(),
+            });
+            await handleOutgoing(encodeBase64URL(packet), session.lastRespPacket
+                ? encodeBase64URL(concatBytes(decodeBase64URL(session.lastRespPacket), packet))
+                : undefined);
+        }
+        input.value = '';
+    }
+    catch (err) {
+        const msg = err instanceof Error && err.message ? err.message : String(err);
+        UI.showToast(`Crypto Error: ${msg}`);
+        console.error('[Crypto] Outgoing processing error:', err);
+    }
+    finally {
+        isSending = false;
+        await renderChatLog();
+        if (!input.disabled)
+            input.focus();
+    }
+};
 UI.$('#media-input').onchange = (e) => {
     const file = e.target.files?.[0];
     if (!file)
         return;
     const reader = new FileReader();
     reader.onload = (re) => {
-        UI.$('#chat-input').value = re.target?.result;
-        UI.$('#chat-form').dispatchEvent(new Event('submit'));
+        pendingMediaText = re.target?.result;
+        submitChatMessage();
         UI.$('#media-input').value = '';
     };
     reader.readAsDataURL(file);
@@ -285,14 +335,18 @@ UI.$('#chat-input').addEventListener('paste', (e) => {
                 continue;
             const reader = new FileReader();
             reader.onload = (re) => {
-                UI.$('#chat-input').value = re.target
-                    ?.result;
-                UI.$('#chat-form').dispatchEvent(new Event('submit'));
+                pendingMediaText = re.target?.result;
+                submitChatMessage();
             };
             reader.readAsDataURL(file);
             break;
         }
 });
+let isSending = false;
+UI.$('#chat-form').onsubmit = (e) => {
+    e.preventDefault();
+    submitChatMessage();
+};
 UI.$('#btn-back-mobile').onclick = () => {
     resetChatView(true);
     renderSidebar();
@@ -367,58 +421,6 @@ UI.$('#btn-add-contact').onclick = async () => {
     catch (err) {
         UI.showToast('Invalid Identity in Clipboard');
         console.error('[Clipboard] Parse identity error:', err);
-    }
-};
-let isSending = false;
-UI.$('#chat-form').onsubmit = async (e) => {
-    e.preventDefault();
-    if (isSending)
-        return;
-    const input = UI.$('#chat-input');
-    const text = input.value.trim();
-    if (!text || !State.currentContactFp)
-        return;
-    isSending = true;
-    input.disabled = true;
-    try {
-        const sessions = await DB.getAll('sessions');
-        const session = sessions.find((s) => s.contactFp === State.currentContactFp);
-        if (!session) {
-            const { packet, session: newSession } = await CreateInit(State.currentContactFp, text);
-            await DB.put('messages', {
-                id: randomUUID(),
-                conversationId: newSession.conversationId,
-                isMe: true,
-                text,
-                timestamp: Date.now(),
-            });
-            await handleOutgoing(encodeBase64URL(packet));
-        }
-        else {
-            const packet = await EncryptMessage(session, text);
-            await DB.put('messages', {
-                id: randomUUID(),
-                conversationId: session.conversationId,
-                isMe: true,
-                text,
-                timestamp: Date.now(),
-            });
-            await handleOutgoing(encodeBase64URL(packet), session.lastRespPacket
-                ? encodeBase64URL(concatBytes(decodeBase64URL(session.lastRespPacket), packet))
-                : undefined);
-        }
-        input.value = '';
-    }
-    catch (err) {
-        const msg = err instanceof Error && err.message ? err.message : String(err);
-        UI.showToast(`Crypto Error: ${msg}`);
-        console.error('[Crypto] Outgoing processing error:', err);
-    }
-    finally {
-        isSending = false;
-        await renderChatLog();
-        if (!input.disabled)
-            input.focus();
     }
 };
 UI.$('#btn-toggle-archived').onclick = () => {
@@ -626,45 +628,50 @@ async function processClipboardText(rawText) {
             if (bytes.length - offset < pktLen)
                 throw new Error('Incomplete packet payload structure');
             const pktBytes = bytes.slice(offset, offset + pktLen);
-            if (type === Config.PACKET_TYPES.INIT) {
-                const { session, plaintext, respPacket } = await ProcessInit(pktBytes);
-                await DB.put('messages', {
-                    id: randomUUID(),
-                    conversationId: session.conversationId,
-                    isMe: false,
-                    text: plaintext,
-                    timestamp: Date.now(),
-                });
-                UI.showToast('Handshake INIT Processed');
-                await handleOutgoing(encodeBase64URL(respPacket));
-                if (State.currentContactFp !== session.contactFp)
-                    await selectContact(session.contactFp);
-                sessionChanged = true;
-            }
-            else if (type === Config.PACKET_TYPES.RESP) {
-                const { alreadyEstablished, session } = await ProcessResp(pktBytes);
-                if (alreadyEstablished)
-                    console.warn('[Ratchet] Skipping redundant RESP packet in bundle.');
-                else {
-                    UI.showToast('Channel Established');
+            offset += pktLen;
+            try {
+                if (type === Config.PACKET_TYPES.INIT) {
+                    const { session, plaintext, respPacket } = await ProcessInit(pktBytes);
+                    await DB.put('messages', {
+                        id: randomUUID(),
+                        conversationId: session.conversationId,
+                        isMe: false,
+                        text: plaintext,
+                        timestamp: Date.now(),
+                    });
+                    UI.showToast('Handshake INIT Processed');
+                    await handleOutgoing(encodeBase64URL(respPacket));
+                    if (State.currentContactFp !== session.contactFp)
+                        await selectContact(session.contactFp);
                     sessionChanged = true;
                 }
-                if (State.currentContactFp !== session.contactFp)
-                    await selectContact(session.contactFp);
+                else if (type === Config.PACKET_TYPES.RESP) {
+                    const { alreadyEstablished, session } = await ProcessResp(pktBytes);
+                    if (alreadyEstablished)
+                        console.warn('[Ratchet] Skipping redundant RESP packet in bundle.');
+                    else {
+                        UI.showToast('Channel Established');
+                        sessionChanged = true;
+                    }
+                    if (State.currentContactFp !== session.contactFp)
+                        await selectContact(session.contactFp);
+                }
+                else if (type === Config.PACKET_TYPES.MSG) {
+                    const { session, plaintext } = await DecryptMessage(pktBytes);
+                    await DB.put('messages', {
+                        id: randomUUID(),
+                        conversationId: session.conversationId,
+                        isMe: false,
+                        text: plaintext,
+                        timestamp: Date.now(),
+                    });
+                    UI.showToast('Message Decrypted');
+                    sessionChanged = true;
+                }
             }
-            else if (type === Config.PACKET_TYPES.MSG) {
-                const { session, plaintext } = await DecryptMessage(pktBytes);
-                await DB.put('messages', {
-                    id: randomUUID(),
-                    conversationId: session.conversationId,
-                    isMe: false,
-                    text: plaintext,
-                    timestamp: Date.now(),
-                });
-                UI.showToast('Message Decrypted');
-                sessionChanged = true;
+            catch (err) {
+                console.error('[Ratchet] Individual packet error skipped:', err);
             }
-            offset += pktLen;
         }
         if (sessionChanged) {
             await renderChatLog();
@@ -673,8 +680,8 @@ async function processClipboardText(rawText) {
     }
     catch (err) {
         const msg = err instanceof Error && err.message ? err.message : String(err);
-        UI.showToast(`Packet Dropped: ${msg}`);
-        console.error('[Ratchet] Incoming packet error:', err);
+        UI.showToast(`Bundle Rejected: ${msg}`);
+        console.error('[Ratchet] Incoming bundle error:', err);
     }
 }
 UI.$('#btn-read').onclick = UI.$('#btn-read-clipboard').onclick = async () => {

@@ -162,7 +162,28 @@ export const DB = (() => {
           .transaction(storeName, 'readonly')
           .objectStore(storeName)
           .index(indexName as string)
-          .get(indexValue as IDBKeyRange);
+          .get(indexValue as IDBValidKey);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    },
+
+    getAllByIndex: async <S extends StoreName, K extends keyof StoreEntity[S]>(
+      storeName: S,
+      indexName: K,
+      indexValue: StoreEntity[S][K],
+    ) => {
+      if (storeName === 'sessions' && !Settings.get().persistHandshakes)
+        return Array.from(memorySessions.values()).filter(
+          (session) => session[indexName as keyof Session] === indexValue,
+        ) as StoreEntity[S][];
+      const db = await getDB();
+      return new Promise<StoreEntity[S][]>((resolve, reject) => {
+        const req = db
+          .transaction(storeName, 'readonly')
+          .objectStore(storeName)
+          .index(indexName as string)
+          .getAll(indexValue as IDBValidKey);
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
       });
