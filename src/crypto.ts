@@ -2,7 +2,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { hmac } from '@noble/hashes/hmac.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { gcm } from '@noble/ciphers/aes.js';
-import { x25519 } from '@noble/curves/ed25519.js';
+import { ed25519, x25519 } from '@noble/curves/ed25519.js';
 import { ml_dsa87 } from '@noble/post-quantum/ml-dsa.js';
 import { ml_kem1024 } from '@noble/post-quantum/ml-kem.js';
 
@@ -99,9 +99,29 @@ export const decryptGCM = (
   aad: Uint8Array,
 ) => gcm(key, nonce, aad).decrypt(ciphertext);
 
+export const keygenEd25519 = ed25519.keygen;
+const signEd25519 = ed25519.sign;
+const verifyEd25519 = ed25519.verify;
+
 export const keygenMLDSA87 = ml_dsa87.keygen;
-export const signMLDSA87 = ml_dsa87.sign;
-export const verifyMLDSA87 = ml_dsa87.verify;
+const signMLDSA87 = ml_dsa87.sign;
+const verifyMLDSA87 = ml_dsa87.verify;
+
+export const signComposite = (
+  message: Uint8Array,
+  ecSk: Uint8Array,
+  dsaSk: Uint8Array,
+) => concatBytes(signEd25519(message, ecSk), signMLDSA87(message, dsaSk));
+
+export const verifyComposite = (
+  sig: Uint8Array,
+  message: Uint8Array,
+  ecPk: Uint8Array,
+  dsaPk: Uint8Array,
+) =>
+  sig.length >= 4691 &&
+  verifyEd25519(sig.slice(0, 64), message, ecPk) &&
+  verifyMLDSA87(sig.slice(64, 4691), message, dsaPk);
 
 export const keygenX25519 = x25519.keygen;
 export const getSharedSecretX25519 = x25519.getSharedSecret;

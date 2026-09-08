@@ -1,5 +1,7 @@
 export interface Identity {
   id: string;
+  ecSk: Uint8Array;
+  ecPk: Uint8Array;
   dsaSk: Uint8Array;
   dsaPk: Uint8Array;
   dhSk: Uint8Array;

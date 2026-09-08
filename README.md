@@ -14,8 +14,8 @@ A serverless, pure-frontend web implementation of the End-to-End Encrypted Clipb
 ### In-Scope Security Guarantees
 
 - **Transport Confidentiality & Integrity:** All ciphertexts copied to the clipboard remain secure even when transmitted over unencrypted or compromised communication channels.
-- **Post-Quantum Forward Secrecy:** Future quantum adversaries capturing current transport payloads cannot decrypt historical sessions due to hybrid X25519/ML-KEM-1024 key encapsulation and Double Ratchet state advancement.
-- **Authenticity & Non-Repudiation:** Initial handshake signatures using ML-DSA-87 prevent active person-in-the-middle (PITM) identity spoofing.
+- **Post-Quantum Forward Secrecy:** Future quantum adversaries capturing current transport payloads cannot decrypt historical sessions due to hybrid **ECDH + ML-KEM-1024** key encapsulation and Double Ratchet state advancement.
+- **Authenticity & Non-Repudiation:** Initial handshake signatures using composite **ECDSA + ML-DSA-87** prevent active person-in-the-middle (PITM) identity spoofing.
 
 ### Out-of-Scope Risks
 
@@ -57,14 +57,13 @@ The application is written in standard TypeScript and styled with Tailwind CSS v
 
 ### Cryptographic Primitive Stack
 
-| Role                         | Primitive   | Specification / Key Length                              |
-| ---------------------------- | ----------- | ------------------------------------------------------- |
-| **Classical Key Exchange**   | X25519      | 256-bit ECDH Curve                                      |
-| **Post-Quantum KEM**         | ML-KEM-1024 | FIPS 203 (1,568-byte Public Key, 1,568-byte Ciphertext) |
-| **Post-Quantum Signature**   | ML-DSA-87   | FIPS 204 (2,592-byte Public Key, 4,627-byte Signature)  |
-| **Symmetric Encryption**     | AES-256-GCM | 256-bit Key, 96-bit Initialization Vector (IV)          |
-| **Key Derivation & Hashing** | HKDF / HMAC | HMAC-SHA256 / HKDF-SHA256                               |
-| **Wire Encoding**            | Base64URL   | Prefixed by ASCII string `e2e1:`                        |
+| Role                         | Primitive      | Specification / Key Length       |
+| ---------------------------- | -------------- | -------------------------------- |
+| **Hybrid Key Exchange**      | ECDH + ML-KEM  | X25519 + FIPS 203 ML-KEM-1024    |
+| **Composite Signature**      | ECDSA + ML-DSA | Ed25519 + FIPS 204 ML-DSA-87     |
+| **Symmetric Encryption**     | AES-256-GCM    | 256-bit Key, 96-bit IV           |
+| **Key Derivation & Hashing** | HKDF / HMAC    | HMAC-SHA256 / HKDF-SHA256        |
+| **Wire Encoding**            | Base64URL      | Prefixed by ASCII string `e2e1:` |
 
 ### Framing & Packet Architecture
 
@@ -80,41 +79,39 @@ All serialized wire payloads enforce a 50 MB limit and begin with a mandatory 12
 | `0x06` – `0x07` | Reserved       | `Bytes[2]` | Padding bytes for 32-bit alignment (`0x0000`)          |
 | `0x08` – `0x0B` | Payload Length | `UInt32BE` | Length of payload body in bytes (Big-Endian)           |
 
-### Identity Bundle Layout (4,193 Bytes Total)
+### Identity Bundle Layout (4,225 Bytes Total)
 
-| Field Name                 | Offset (Bytes) | Size (Bytes) | Cryptographic Purpose               |
-| -------------------------- | -------------- | ------------ | ----------------------------------- |
-| **Bundle Version**         | `0`            | 1            | Format identifier (`0x01`)          |
-| **ML-DSA-87 Public Key**   | `1`            | 2,592        | Identity signature verification     |
-| **X25519 Public Key**      | `2593`         | 32           | Long-term classical static DH key   |
-| **ML-KEM-1024 Public Key** | `2625`         | 1,568        | Static PQC KEM encapsulation target |
+| Field Name                                    | Offset (Bytes) | Size (Bytes) | Cryptographic Purpose                                    |
+| --------------------------------------------- | -------------- | ------------ | -------------------------------------------------------- |
+| **Bundle Version**                            | `0`            | 1            | Format identifier (`0x01`)                               |
+| **Hybrid Signature PK (Ed25519 + ML-DSA-87)** | `1`            | 2,624        | Ed25519 (32B) + ML-DSA-87 (2,592B) identity verification |
+| **Composite KEM PK (X25519 + ML-KEM-1024)**   | `2625`         | 1,600        | X25519 (32B) + ML-KEM-1024 (1,568B) encapsulation target |
 
 ### Packet Types & Payload Specifications
 
 #### 1. INIT Packet Payload (`0x01`)
 
-Establishes the session, performs hybrid key agreement, and verifies mutual identity. To prevent parsing faults, the receiver enforces a strict minimum structural integrity size of 14,641 bytes (12-byte header + 14,613-byte fixed payload + 16-byte authentication tag).
+Establishes the session, performs hybrid key agreement, and verifies mutual identity.
 
-| Size (Bytes) | Field                               | Description                                        |
-| ------------ | ----------------------------------- | -------------------------------------------------- |
-| 4,193        | **Sender Identity Bundle**          | Initiator's public Identity Bundle                 |
-| 4,193        | **Receiver Identity Bundle**        | Target peer's public Identity Bundle               |
-| 32           | **Ephemeral X25519 PK ($Ek_{pk}$)** | Ephemeral DH Public Key                            |
-| 1,568        | **ML-KEM Ciphertext ($KEM_{CT}$)**  | Encapsulated key against Receiver's ML-KEM PK      |
-| 4,627        | **ML-DSA Signature ($Sig$)**        | Signature over parameters verifying handshake      |
-| Variable     | **Encrypted Payload**               | AES-256-GCM ciphertext containing setup parameters |
+| Size (Bytes) | Field                               | Description                                            |
+| ------------ | ----------------------------------- | ------------------------------------------------------ |
+| 4,225        | **Sender Identity Bundle**          | Initiator's public Identity Bundle                     |
+| 4,225        | **Receiver Identity Bundle**        | Target peer's public Identity Bundle                   |
+| 1,600        | **Hybrid Ephemeral PK ($Ek_{pk}$)** | Ephemeral X25519 PK (32B) + ML-KEM Ciphertext (1,568B) |
+| 4,691        | **Composite Signature ($Sig$)**     | Ed25519 Signature (64B) + ML-DSA-87 Signature (4,627B) |
+| Variable     | **Encrypted Payload**               | AES-256-GCM ciphertext containing setup parameters     |
 
 #### 2. RESP Packet Payload (`0x02`)
 
-Acknowledges initialization. The protocol drops RESP payloads shorter than 60 bytes (12-byte header + 48-byte payload).
+Acknowledges initialization.
 
-| Size (Bytes) | Field                 | Description                                                                                  |
-| ------------ | --------------------- | -------------------------------------------------------------------------------------------- |
-| 48           | **Encrypted Payload** | AES-256-GCM payload containing Responder Ephemeral X25519 PK (32 bytes) + GCM Tag (16 bytes) |
+| Size (Bytes) | Field                 | Description                                                                                                     |
+| ------------ | --------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Variable     | **Encrypted Payload** | AES-256-GCM payload containing Responder Hybrid Ephemeral Public Key (X25519 + ML-KEM) + GCM Authentication Tag |
 
 #### 3. MSG Packet Payload (`0x03`)
 
-Carries active Double Ratchet session payloads. Any `MSG` packet shorter than 84 bytes is dropped as truncated.
+Carries active Double Ratchet session payloads.
 
 | Absolute Offset | Field Name                   | Type / Size | Description                                             |
 | --------------- | ---------------------------- | ----------- | ------------------------------------------------------- |
@@ -140,19 +137,14 @@ The initial Shared Key ($SK$) combines classical ECDH key agreement with post-qu
 
 $$SK = \text{HKDF-SHA256}\left(\mathtt{"ECP-INIT-v1"} \parallel DH_1 \parallel KEM_{SS}\right)$$
 
-#### Initialization Signature
+#### Composite Initialization Signature
 
-Handshake integrity and authenticity are asserted by signing the concatenated parameter block using the sender's ML-DSA-87 private key:
+Handshake integrity and authenticity are asserted by signing the concatenated parameter block using the sender's composite ECDSA + ML-DSA-87 private keys:
 
-$$Sig = \text{Sign}_{\text{ML-DSA}}\left(\mathtt{"ECP-INIT-v1"} \parallel SenderID \parallel ReceiverID \parallel Ek_{pk} \parallel KEM_{CT}\right)$$
+$$Sig = \text{Sign}_{\text{Composite-ECDSA+ML-DSA}}\left(\mathtt{"ECP-INIT-v1"} \parallel SenderID \parallel ReceiverID \parallel Ek_{pk} \parallel KEM_{CT}\right)$$
 
 #### Symmetric Double Ratchet Chains
 
 Chain Keys ($CK$) and Message Keys ($MK$) advance via HMAC-SHA256 step derivation:
 
-$$
-\begin{aligned}
-MK &= \text{HMAC-SHA256}(CK, \text{0x01}) \\
-CK_{\text{next}} &= \text{HMAC-SHA256}(CK, \text{0x02})
-\end{aligned}
-$$
+$$\begin{aligned} MK &= \text{HMAC-SHA256}(CK, \text{0x01}) \\ CK_{\text{next}} &= \text{HMAC-SHA256}(CK, \text{0x02}) \end{aligned}$$

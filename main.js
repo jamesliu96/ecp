@@ -10,16 +10,16 @@ const State = {
     searchQuery: '',
 };
 const UI = {
-    $: (id) => {
-        const el = document.getElementById(id) ?? document.querySelector(id);
+    $: (s) => {
+        const el = document.querySelector(s);
         if (!el)
-            throw new Error(`Element #${id} not found in DOM`);
+            throw new Error(`Element ${s} not found in DOM`);
         return el;
     },
     toastTimer: undefined,
     showToast: (msg, duration = 3500) => {
-        const t = UI.$('toast');
-        UI.$('toast-msg').textContent = msg;
+        const t = UI.$('#toast');
+        UI.$('#toast-msg').textContent = msg;
         t.classList.remove('opacity-0', 'pointer-events-none');
         t.classList.add('opacity-100');
         clearTimeout(UI.toastTimer);
@@ -29,33 +29,33 @@ const UI = {
         }, duration);
     },
     showModal: (containerHtml) => {
-        UI.$('modal-container').innerHTML = containerHtml;
-        UI.$('modal-overlay').classList.remove('hidden');
-        UI.$('modal-overlay').classList.add('flex');
+        UI.$('#modal-container').innerHTML = containerHtml;
+        UI.$('#modal-overlay').classList.remove('hidden');
+        UI.$('#modal-overlay').classList.add('flex');
     },
     closeModal: () => {
-        UI.$('modal-overlay').classList.remove('flex');
-        UI.$('modal-overlay').classList.add('hidden');
+        UI.$('#modal-overlay').classList.remove('flex');
+        UI.$('#modal-overlay').classList.add('hidden');
     },
 };
-UI.$('modal-overlay').onclick = () => {
+UI.$('#modal-overlay').onclick = () => {
     UI.closeModal();
 };
 const nextTick = 'requestIdleCallback' in globalThis ? requestIdleCallback : setTimeout;
-const closePeerDropdown = () => UI.$('peer-dropdown').classList.add('hidden');
+const closePeerDropdown = () => UI.$('#peer-dropdown').classList.add('hidden');
 function resetChatView(updateHash = true) {
     delete State.currentContactFp;
     if (updateHash && location.hash)
         history.replaceState(null, '', location.pathname + location.search);
-    UI.$('chat-view').classList.add('hidden');
-    UI.$('chat-view').classList.remove('flex');
-    UI.$('sidebar-view').classList.remove('max-md:hidden');
-    UI.$('chat-messages').replaceChildren();
-    UI.$('chat-title').textContent = 'Select a Peer';
-    UI.$('chat-status-text').textContent = 'Idle';
-    UI.$('chat-status-dot').className = 'w-2 h-2 rounded-full bg-slate-500';
-    UI.$('chat-input-area').classList.add('hidden');
-    UI.$('empty-state').classList.remove('hidden');
+    UI.$('#chat-view').classList.add('hidden');
+    UI.$('#chat-view').classList.remove('flex');
+    UI.$('#sidebar-view').classList.remove('max-md:hidden');
+    UI.$('#chat-messages').replaceChildren();
+    UI.$('#chat-title').textContent = 'Select a Peer';
+    UI.$('#chat-status-text').textContent = 'Idle';
+    UI.$('#chat-status-dot').className = 'w-2 h-2 rounded-full bg-slate-500';
+    UI.$('#chat-input-area').classList.add('hidden');
+    UI.$('#empty-state').classList.remove('hidden');
 }
 async function handleOutgoing(packetBase64, bundleBase64) {
     try {
@@ -69,7 +69,7 @@ async function handleOutgoing(packetBase64, bundleBase64) {
 }
 async function renderSidebar() {
     const local = await getLocalIdentity();
-    UI.$('my-fingerprint').textContent = calculateFingerprint(serializeIdentityPublic(local));
+    UI.$('#my-fingerprint').textContent = calculateFingerprint(serializeIdentityPublic(local));
     let contacts = await DB.getAll('contacts');
     if (!State.showArchived)
         contacts = contacts.filter((c) => !c.archived);
@@ -125,7 +125,7 @@ async function renderSidebar() {
         };
         frag.appendChild(div);
     }
-    UI.$('contacts-list').replaceChildren(frag);
+    UI.$('#contacts-list').replaceChildren(frag);
 }
 async function selectContact(fp, isNavigatingHistory = false) {
     if (fp === State.currentContactFp)
@@ -144,22 +144,22 @@ async function selectContact(fp, isNavigatingHistory = false) {
                 history.pushState(null, '', targetHash);
     }
     State.currentContactFp = fp;
-    UI.$('chat-messages').replaceChildren();
+    UI.$('#chat-messages').replaceChildren();
     contact.lastReadTimestamp = Date.now();
     await DB.put('contacts', contact);
-    UI.$('sidebar-view').classList.add('max-md:hidden');
-    UI.$('chat-view').classList.remove('hidden');
-    UI.$('chat-view').classList.add('flex');
-    UI.$('empty-state').classList.add('hidden');
-    UI.$('chat-input-area').classList.remove('hidden');
-    UI.$('chat-title').textContent = contact.name;
+    UI.$('#sidebar-view').classList.add('max-md:hidden');
+    UI.$('#chat-view').classList.remove('hidden');
+    UI.$('#chat-view').classList.add('flex');
+    UI.$('#empty-state').classList.add('hidden');
+    UI.$('#chat-input-area').classList.remove('hidden');
+    UI.$('#chat-title').textContent = contact.name;
     closePeerDropdown();
-    UI.$('btn-archive-contact').textContent = contact.archived
+    UI.$('#btn-archive-contact').textContent = contact.archived
         ? 'Restore Peer'
         : 'Archive Peer';
     State.searchQuery = '';
-    UI.$('chat-search-input').value = '';
-    UI.$('search-bar-container').classList.add('hidden');
+    UI.$('#chat-search-input').value = '';
+    UI.$('#search-bar-container').classList.add('hidden');
     await renderChatLog();
     await renderSidebar();
 }
@@ -176,25 +176,25 @@ async function renderChatLog() {
     if (session) {
         if (session.state === 'HANDSHAKE_SENT' ||
             session.state === 'HANDSHAKE_RECEIVED') {
-            UI.$('chat-status-text').textContent =
+            UI.$('#chat-status-text').textContent =
                 session.state === 'HANDSHAKE_SENT'
                     ? 'Awaiting RESP'
                     : 'Handshake Pending';
-            UI.$('chat-status-dot').className =
+            UI.$('#chat-status-dot').className =
                 'w-2 h-2 rounded-full bg-amber-400 animate-pulse';
-            UI.$('chat-input').disabled =
-                session.state === 'HANDSHAKE_SENT';
+            UI.$('#chat-input').disabled = UI.$('#media-input').disabled = session.state === 'HANDSHAKE_SENT';
         }
         else {
-            UI.$('chat-status-text').textContent = 'Channel Established';
-            UI.$('chat-status-dot').className = 'w-2 h-2 rounded-full bg-emerald-400';
-            UI.$('chat-input').disabled = false;
+            UI.$('#chat-status-text').textContent = 'Channel Established';
+            UI.$('#chat-status-dot').className =
+                'w-2 h-2 rounded-full bg-emerald-400';
+            UI.$('#chat-input').disabled = UI.$('#media-input').disabled = false;
         }
     }
     else {
-        UI.$('chat-status-text').textContent = 'Idle';
-        UI.$('chat-status-dot').className = 'w-2 h-2 rounded-full bg-slate-500';
-        UI.$('chat-input').disabled = false;
+        UI.$('#chat-status-text').textContent = 'Idle';
+        UI.$('#chat-status-dot').className = 'w-2 h-2 rounded-full bg-slate-500';
+        UI.$('#chat-input').disabled = UI.$('#media-input').disabled = false;
     }
     const query = State.searchQuery.toLowerCase();
     const chatMsgs = msgs
@@ -202,7 +202,7 @@ async function renderChatLog() {
         .sort((a, b) => a.timestamp === b.timestamp
         ? a.id.localeCompare(b.id)
         : a.timestamp - b.timestamp);
-    const ctn = UI.$('chat-messages');
+    const ctn = UI.$('#chat-messages');
     const isNearBottom = ctn.scrollHeight - ctn.scrollTop - ctn.clientHeight < 150;
     const frag = document.createDocumentFragment();
     for (const m of chatMsgs) {
@@ -258,20 +258,20 @@ async function renderChatLog() {
     if (isNearBottom || lastMsg?.isMe)
         requestAnimationFrame(() => (ctn.scrollTop = ctn.scrollHeight));
 }
-UI.$('btn-attach').onclick = () => UI.$('media-input').click();
-UI.$('media-input').onchange = (e) => {
+UI.$('#btn-attach').onclick = () => UI.$('#media-input').click();
+UI.$('#media-input').onchange = (e) => {
     const file = e.target.files?.[0];
     if (!file)
         return;
     const reader = new FileReader();
     reader.onload = (re) => {
-        UI.$('chat-input').value = re.target?.result;
-        UI.$('chat-form').dispatchEvent(new Event('submit'));
-        UI.$('media-input').value = '';
+        UI.$('#chat-input').value = re.target?.result;
+        UI.$('#chat-form').dispatchEvent(new Event('submit'));
+        UI.$('#media-input').value = '';
     };
     reader.readAsDataURL(file);
 };
-UI.$('chat-input').addEventListener('paste', (e) => {
+UI.$('#chat-input').addEventListener('paste', (e) => {
     const items = e.clipboardData?.items;
     if (!items)
         return;
@@ -285,20 +285,20 @@ UI.$('chat-input').addEventListener('paste', (e) => {
                 continue;
             const reader = new FileReader();
             reader.onload = (re) => {
-                UI.$('chat-input').value = re.target
+                UI.$('#chat-input').value = re.target
                     ?.result;
-                UI.$('chat-form').dispatchEvent(new Event('submit'));
+                UI.$('#chat-form').dispatchEvent(new Event('submit'));
             };
             reader.readAsDataURL(file);
             break;
         }
     }
 });
-UI.$('btn-back-mobile').onclick = () => {
+UI.$('#btn-back-mobile').onclick = () => {
     resetChatView(true);
     renderSidebar();
 };
-UI.$('btn-copy-identity').onclick = async () => {
+UI.$('#btn-copy-identity').onclick = async () => {
     try {
         const localIdentity = await getLocalIdentity();
         const serialized = serializeIdentityPublic(localIdentity);
@@ -310,12 +310,10 @@ UI.$('btn-copy-identity').onclick = async () => {
         console.error('[Clipboard] Identity copy error:', err);
     }
 };
-UI.$('btn-add-contact').onclick = async () => {
+UI.$('#btn-add-contact').onclick = async () => {
     try {
         const text = await navigator.clipboard.readText();
         const bytes = parseEnvelope(text);
-        if (bytes[0] !== Config.IDENTITY_VERSION)
-            throw new Error('Invalid format');
         const fp = calculateFingerprint(bytes);
         const localFp = await getLocalFingerprint();
         if (fp === localFp)
@@ -334,19 +332,19 @@ UI.$('btn-add-contact').onclick = async () => {
       </div>
     `);
         nextTick(() => {
-            const input = UI.$('new-alias-input');
+            const input = UI.$('#new-alias-input');
             if (input) {
                 input.focus();
                 input.onkeydown = (e) => {
                     if (e.key === 'Enter')
-                        UI.$('btn-confirm-add').click();
+                        UI.$('#btn-confirm-add').click();
                 };
             }
         });
-        UI.$('btn-cancel-add').onclick = UI.closeModal;
-        UI.$('btn-confirm-add').onclick = async () => {
+        UI.$('#btn-cancel-add').onclick = UI.closeModal;
+        UI.$('#btn-confirm-add').onclick = async () => {
             try {
-                const name = UI.$('new-alias-input').value.trim();
+                const name = UI.$('#new-alias-input').value.trim();
                 if (!name)
                     return;
                 await DB.put('contacts', {
@@ -373,11 +371,11 @@ UI.$('btn-add-contact').onclick = async () => {
     }
 };
 let isSending = false;
-UI.$('chat-form').onsubmit = async (e) => {
+UI.$('#chat-form').onsubmit = async (e) => {
     e.preventDefault();
     if (isSending)
         return;
-    const input = UI.$('chat-input');
+    const input = UI.$('#chat-input');
     const text = input.value.trim();
     if (!text || !State.currentContactFp)
         return;
@@ -411,7 +409,6 @@ UI.$('chat-form').onsubmit = async (e) => {
                 : undefined);
         }
         input.value = '';
-        await renderChatLog();
     }
     catch (err) {
         const msg = err instanceof Error && err.message ? err.message : String(err);
@@ -420,39 +417,39 @@ UI.$('chat-form').onsubmit = async (e) => {
     }
     finally {
         isSending = false;
-        input.disabled = false;
-        input.focus();
+        await renderChatLog();
+        if (!input.disabled)
+            input.focus();
     }
 };
-UI.$('btn-toggle-archived').onclick = () => {
+UI.$('#btn-toggle-archived').onclick = () => {
     State.showArchived = !State.showArchived;
-    UI.$('btn-toggle-archived').textContent = State.showArchived
+    UI.$('#btn-toggle-archived').textContent = State.showArchived
         ? 'Hide Archived'
         : 'Show Archived';
     renderSidebar();
 };
-UI.$('btn-peer-menu').onclick = () => UI.$('peer-dropdown').classList.toggle('hidden');
+UI.$('#btn-peer-menu').onclick = () => UI.$('#peer-dropdown').classList.toggle('hidden');
 document.addEventListener('click', (e) => {
-    if (!UI.$('btn-peer-menu').contains(e.target))
+    if (!UI.$('#btn-peer-menu').contains(e.target))
         closePeerDropdown();
 });
-UI.$('btn-search-toggle').onclick = () => {
-    const c = UI.$('search-bar-container');
+UI.$('#btn-search-toggle').onclick = () => {
+    const c = UI.$('#search-bar-container');
     c.classList.toggle('hidden');
-    if (!c.classList.contains('hidden')) {
-        UI.$('chat-search-input').focus();
-    }
+    if (!c.classList.contains('hidden'))
+        UI.$('#chat-search-input').focus();
     else {
         State.searchQuery = '';
-        UI.$('chat-search-input').value = '';
+        UI.$('#chat-search-input').value = '';
         renderChatLog();
     }
 };
-UI.$('chat-search-input').oninput = (e) => {
+UI.$('#chat-search-input').oninput = (e) => {
     State.searchQuery = e.target.value;
     renderChatLog();
 };
-UI.$('btn-rename-contact').onclick = async () => {
+UI.$('#btn-rename-contact').onclick = async () => {
     closePeerDropdown();
     if (!State.currentContactFp)
         return;
@@ -468,23 +465,23 @@ UI.$('btn-rename-contact').onclick = async () => {
     </div>
   `);
     nextTick(() => {
-        const input = UI.$('rename-val');
+        const input = UI.$('#rename-val');
         if (input) {
             input.value = contact.name;
             input.focus();
             input.onkeydown = (e) => {
                 if (e.key === 'Enter')
-                    UI.$('btn-save').click();
+                    UI.$('#btn-save').click();
             };
         }
     });
-    UI.$('btn-cancel').onclick = UI.closeModal;
-    UI.$('btn-save').onclick = async () => {
+    UI.$('#btn-cancel').onclick = UI.closeModal;
+    UI.$('#btn-save').onclick = async () => {
         try {
             contact.name =
-                UI.$('rename-val').value.trim() || contact.name;
+                UI.$('#rename-val').value.trim() || contact.name;
             await DB.put('contacts', contact);
-            UI.$('chat-title').textContent = contact.name;
+            UI.$('#chat-title').textContent = contact.name;
             UI.closeModal();
             await renderSidebar();
         }
@@ -494,7 +491,7 @@ UI.$('btn-rename-contact').onclick = async () => {
         }
     };
 };
-UI.$('btn-archive-contact').onclick = async () => {
+UI.$('#btn-archive-contact').onclick = async () => {
     closePeerDropdown();
     if (!State.currentContactFp)
         return;
@@ -503,7 +500,7 @@ UI.$('btn-archive-contact').onclick = async () => {
         if (!contact)
             return;
         contact.archived = !contact.archived;
-        UI.$('btn-archive-contact').textContent = contact.archived
+        UI.$('#btn-archive-contact').textContent = contact.archived
             ? 'Restore Peer'
             : 'Archive Peer';
         await DB.put('contacts', contact);
@@ -515,7 +512,7 @@ UI.$('btn-archive-contact').onclick = async () => {
         console.error('[Storage] Archive contact error:', err);
     }
 };
-UI.$('btn-delete-contact').onclick = async () => {
+UI.$('#btn-delete-contact').onclick = async () => {
     closePeerDropdown();
     if (!State.currentContactFp)
         return;
@@ -531,8 +528,8 @@ UI.$('btn-delete-contact').onclick = async () => {
       <button id="btn-confirm-del" class="px-4 py-2 text-sm bg-red-600 hover:bg-red-500 text-white font-medium rounded-lg min-h-11 cursor-pointer transition-colors shadow-sm">Delete Peer</button>
     </div>
   `);
-    UI.$('btn-cancel-del').onclick = UI.closeModal;
-    UI.$('btn-confirm-del').onclick = async () => {
+    UI.$('#btn-cancel-del').onclick = UI.closeModal;
+    UI.$('#btn-confirm-del').onclick = async () => {
         try {
             await DB.delete('contacts', targetFp);
             await DB.delete('sessions', targetFp);
@@ -549,7 +546,7 @@ UI.$('btn-delete-contact').onclick = async () => {
         }
     };
 };
-UI.$('btn-reset-session').onclick = async () => {
+UI.$('#btn-reset-session').onclick = async () => {
     closePeerDropdown();
     if (!State.currentContactFp)
         return;
@@ -565,8 +562,8 @@ UI.$('btn-reset-session').onclick = async () => {
       <button id="btn-confirm-wipe" class="px-4 py-2 text-sm bg-amber-600 hover:bg-amber-500 text-white font-medium rounded-lg min-h-11 cursor-pointer transition-colors shadow-sm">Wipe</button>
     </div>
   `);
-    UI.$('btn-cancel-wipe').onclick = UI.closeModal;
-    UI.$('btn-confirm-wipe').onclick = async () => {
+    UI.$('#btn-cancel-wipe').onclick = UI.closeModal;
+    UI.$('#btn-confirm-wipe').onclick = async () => {
         try {
             await DB.delete('sessions', targetFp);
             await DB.deleteConversation(session.conversationID);
@@ -580,7 +577,7 @@ UI.$('btn-reset-session').onclick = async () => {
         }
     };
 };
-UI.$('btn-global-settings').onclick = () => {
+UI.$('#btn-global-settings').onclick = () => {
     const cfg = Settings.get();
     UI.showModal(`
     <div class="p-4 border-b border-slate-800"><h3 class="font-bold text-slate-200">Global Settings</h3></div>
@@ -594,10 +591,10 @@ UI.$('btn-global-settings').onclick = () => {
       <button id="btn-save-cfg" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium min-h-11 cursor-pointer transition-colors shadow-sm">Save Options</button>
     </div>
   `);
-    UI.$('btn-save-cfg').onclick = () => {
+    UI.$('#btn-save-cfg').onclick = () => {
         try {
             Settings.set({
-                persistHandshakes: UI.$('cfg-persist').checked,
+                persistHandshakes: UI.$('#cfg-persist').checked,
             });
             UI.closeModal();
             UI.showToast('Settings Saved');
@@ -681,7 +678,7 @@ async function processClipboardText(rawText) {
         console.error('[Ratchet] Incoming packet error:', err);
     }
 }
-UI.$('btn-read').onclick = UI.$('btn-read-clipboard').onclick = async () => {
+UI.$('#btn-read').onclick = UI.$('#btn-read-clipboard').onclick = async () => {
     try {
         const text = await navigator.clipboard.readText();
         await processClipboardText(text);
@@ -703,8 +700,8 @@ document.addEventListener('paste', async (e) => {
 async function showPeerMetadata(contactFp) {
     const session = await DB.get('sessions', contactFp);
     const contact = await DB.get('contacts', contactFp);
-    UI.$('metadata-title').textContent = 'Peer Diagnostics';
-    UI.$('metadata-content').innerHTML = `
+    UI.$('#metadata-title').textContent = 'Peer Diagnostics';
+    UI.$('#metadata-content').innerHTML = `
     <div><strong>Peer FP:</strong> <span id="meta-fp"></span></div>
     <hr class="border-slate-800 my-2" />
     <div><strong>Double Ratchet State:</strong> <span id="meta-state" class="${session
@@ -721,23 +718,23 @@ async function showPeerMetadata(contactFp) {
         : ''}
     <div class="mt-4 text-[9px] text-slate-500 italic">* Ephemeral key material zeroized for memory hygiene</div>
   `;
-    UI.$('meta-fp').textContent = contact ? contact.fingerprint : 'Unknown';
-    UI.$('meta-state').textContent = session ? session.state : 'IDLE';
+    UI.$('#meta-fp').textContent = contact ? contact.fingerprint : 'Unknown';
+    UI.$('#meta-state').textContent = session ? session.state : 'IDLE';
     if (session) {
-        UI.$('meta-cid').textContent = session.conversationID;
-        UI.$('meta-ns').textContent = session.Ns.toString();
-        UI.$('meta-nr').textContent = session.Nr.toString();
-        UI.$('meta-pn').textContent = session.PN.toString();
-        UI.$('meta-persisted').textContent = Settings.get().persistHandshakes
+        UI.$('#meta-cid').textContent = session.conversationID;
+        UI.$('#meta-ns').textContent = session.Ns.toString();
+        UI.$('#meta-nr').textContent = session.Nr.toString();
+        UI.$('#meta-pn').textContent = session.PN.toString();
+        UI.$('#meta-persisted').textContent = Settings.get().persistHandshakes
             ? 'IndexedDB'
             : 'Volatile';
     }
-    UI.$('metadata-overlay').classList.remove('hidden');
-    UI.$('metadata-overlay').classList.add('flex');
+    UI.$('#metadata-overlay').classList.remove('hidden');
+    UI.$('#metadata-overlay').classList.add('flex');
 }
 function showMessageMetadata(msg) {
-    UI.$('metadata-title').textContent = 'Frame Diagnostics';
-    UI.$('metadata-content').innerHTML = `
+    UI.$('#metadata-title').textContent = 'Frame Diagnostics';
+    UI.$('#metadata-content').innerHTML = `
     <div><strong>Frame ID:</strong> <span id="meta-frame"></span></div>
     <div><strong>Vector:</strong> <span id="meta-vector"></span></div>
     <div><strong>Timestamp:</strong> <span id="meta-ts"></span> <small>(<span id="meta-ts-local"></span>)</small></div>
@@ -748,23 +745,23 @@ function showMessageMetadata(msg) {
     <div><strong>Post-Quantum Signature:</strong> ML-DSA-87</div>
     <div><strong>Key Derivation & Hashing:</strong> HKDF-SHA256 / HMAC-SHA256</div>
   `;
-    UI.$('meta-frame').textContent = msg.id;
-    UI.$('meta-vector').textContent = msg.isMe
+    UI.$('#meta-frame').textContent = msg.id;
+    UI.$('#meta-vector').textContent = msg.isMe
         ? 'Egress (Local)'
         : 'Ingress (Remote)';
     const ts = new Date(msg.timestamp);
-    UI.$('meta-ts').textContent = ts.toISOString();
-    UI.$('meta-ts-local').textContent = ts.toLocaleString();
-    UI.$('metadata-overlay').classList.remove('hidden');
-    UI.$('metadata-overlay').classList.add('flex');
+    UI.$('#meta-ts').textContent = ts.toISOString();
+    UI.$('#meta-ts-local').textContent = ts.toLocaleString();
+    UI.$('#metadata-overlay').classList.remove('hidden');
+    UI.$('#metadata-overlay').classList.add('flex');
 }
-UI.$('metadata-overlay').onclick = () => {
-    UI.$('metadata-overlay').classList.add('hidden');
-    UI.$('metadata-overlay').classList.remove('flex');
+UI.$('#metadata-overlay').onclick = () => {
+    UI.$('#metadata-overlay').classList.add('hidden');
+    UI.$('#metadata-overlay').classList.remove('flex');
 };
-UI.$('btn-close-metadata').onclick = () => {
-    UI.$('metadata-overlay').classList.add('hidden');
-    UI.$('metadata-overlay').classList.remove('flex');
+UI.$('#btn-close-metadata').onclick = () => {
+    UI.$('#metadata-overlay').classList.add('hidden');
+    UI.$('#metadata-overlay').classList.remove('flex');
 };
 async function handleRoute() {
     const hash = location.hash.replace(/^#/, '').trim();

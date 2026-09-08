@@ -292,11 +292,14 @@
           id="chat-input-area"
           class="p-3 bg-slate-900/90 border-t border-slate-800 hidden relative shrink-0 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
         >
-          <form id="chat-form" class="flex gap-2">
+          <form
+            id="chat-form"
+            class="flex flex-row flex-nowrap items-center gap-1.5 sm:gap-2 min-w-0"
+          >
             <button
               type="button"
               id="btn-attach"
-              class="bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-emerald-400 px-3 min-h-11 flex items-center justify-center cursor-pointer transition-colors border border-slate-700/80 rounded-lg"
+              class="bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-emerald-400 px-2.5 sm:px-3 min-h-11 shrink-0 flex items-center justify-center cursor-pointer transition-colors border border-slate-700/80 rounded-lg"
               aria-label="Attach Media"
             >
               <svg
@@ -322,7 +325,7 @@
             <input
               type="text"
               id="chat-input"
-              class="flex-1 bg-slate-950 border border-slate-700/80 rounded-lg px-4 py-2 text-base sm:text-sm text-slate-200 focus:outline-none focus:border-emerald-500 min-h-11 transition-colors"
+              class="flex-1 min-w-0 bg-slate-950 border border-slate-700/80 rounded-lg px-3 sm:px-4 py-2 text-base sm:text-sm text-slate-200 focus:outline-none focus:border-emerald-500 min-h-11 transition-colors"
               placeholder="Type message..."
               autocomplete="off"
               enterkeyhint="send"
@@ -330,13 +333,13 @@
             <button
               type="button"
               id="btn-read"
-              class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-4 md:px-5 py-2 rounded-lg text-xs font-semibold min-h-11 border border-slate-700/80 cursor-pointer transition-all"
+              class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 sm:px-4 md:px-5 py-2 rounded-lg text-xs font-semibold min-h-11 border border-slate-700/80 cursor-pointer transition-all shrink-0"
             >
               Read
             </button>
             <button
               type="submit"
-              class="bg-emerald-600 hover:bg-emerald-500 text-white px-5 md:px-6 py-2 rounded-lg text-xs font-semibold min-h-11 cursor-pointer transition-all shadow-xs"
+              class="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 sm:px-5 md:px-6 py-2 rounded-lg text-xs font-semibold min-h-11 cursor-pointer transition-all shadow-xs shrink-0"
             >
               Send
             </button>

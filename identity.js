@@ -1,40 +1,44 @@
 import { Config } from './config.js';
-import { concatBytes, keygenMLDSA87, keygenMLKEM1024, keygenX25519, sha256, encodeBase64URL, } from './crypto.js';
+import { concatBytes, keygenEd25519, keygenMLDSA87, keygenX25519, keygenMLKEM1024, sha256, encodeBase64URL, } from './crypto.js';
 import { DB } from './storage.js';
 export const getLocalIdentity = async () => {
     let id = await DB.get('identity', 'local');
     if (!id) {
+        const ecKP = keygenEd25519();
         const dsaKP = keygenMLDSA87();
         const dhKP = keygenX25519();
-        const pqKP = keygenMLKEM1024();
+        const kemKP = keygenMLKEM1024();
         id = {
             id: 'local',
+            ecSk: ecKP.secretKey,
+            ecPk: ecKP.publicKey,
             dsaSk: dsaKP.secretKey,
             dsaPk: dsaKP.publicKey,
             dhSk: dhKP.secretKey,
             dhPk: dhKP.publicKey,
-            kemSk: pqKP.secretKey,
-            kemPk: pqKP.publicKey,
+            kemSk: kemKP.secretKey,
+            kemPk: kemKP.publicKey,
         };
         await DB.put('identity', id);
     }
     return id;
 };
-export const serializeIdentityPublic = (id) => concatBytes(new Uint8Array([Config.IDENTITY_VERSION]), id.dsaPk.slice(0, 2592), id.dhPk.slice(0, 32), id.kemPk.slice(0, 1568));
+export const serializeIdentityPublic = (id) => concatBytes(new Uint8Array([Config.IDENTITY_VERSION]), id.ecPk, id.dsaPk, id.dhPk, id.kemPk);
 export const parseIdentityPublic = (bytes) => {
-    if (bytes.length < 4193)
+    if (bytes.length < 4225)
         throw new Error('Identity packet malformed');
     if (bytes[0] !== Config.IDENTITY_VERSION)
         throw new Error('Unsupported identity version');
     return {
-        dsaPk: bytes.slice(1, 2593),
-        dhPk: bytes.slice(2593, 2625),
-        kemPk: bytes.slice(2625, 4193),
+        ecPk: bytes.slice(1, 33),
+        dsaPk: bytes.slice(33, 2625),
+        dhPk: bytes.slice(2625, 2657),
+        kemPk: bytes.slice(2657, 4225),
     };
 };
 export const calculateFingerprint = (identityBytes) => {
     const idPub = parseIdentityPublic(identityBytes);
-    return encodeBase64URL(sha256(concatBytes(new TextEncoder().encode('ECP-ID-v1'), idPub.dsaPk, idPub.dhPk, idPub.kemPk)));
+    return encodeBase64URL(sha256(concatBytes(new TextEncoder().encode('ECP-ID-v1'), idPub.ecPk, idPub.dsaPk, idPub.dhPk, idPub.kemPk)));
 };
 export const getLocalFingerprint = async () => calculateFingerprint(serializeIdentityPublic(await getLocalIdentity()));
 //# sourceMappingURL=identity.js.map

@@ -1,21 +1,21 @@
 import { buildHeader, parseHeader } from './codec.js';
 import { Config } from './config.js';
 import {
-  concatBytes,
-  decapsulateMLKEM1024,
-  decryptGCM,
-  encapsulateMLKEM1024,
-  encryptGCM,
+  encodeBase64URL,
   decodeBase64URL,
-  getSharedSecretX25519,
-  hkdfSHA256,
-  hmacSHA256,
-  keygenX25519,
+  concatBytes,
   memcmp,
   sha256,
-  signMLDSA87,
-  encodeBase64URL,
-  verifyMLDSA87,
+  hkdfSHA256,
+  hmacSHA256,
+  encryptGCM,
+  decryptGCM,
+  encapsulateMLKEM1024,
+  decapsulateMLKEM1024,
+  keygenX25519,
+  getSharedSecretX25519,
+  signComposite,
+  verifyComposite,
 } from './crypto.js';
 import {
   getLocalFingerprint,
@@ -64,7 +64,7 @@ export async function CreateInit(contactFp: string, plaintextStr: string) {
     ekKP.publicKey,
     kemRes.cipherText,
   );
-  const sig = signMLDSA87(sigInput, local.dsaSk);
+  const sig = signComposite(sigInput, local.ecSk, local.dsaSk);
 
   const MK0 = hkdfSHA256(
     SK,
@@ -148,16 +148,16 @@ export async function ProcessInit(packetBytes: Uint8Array) {
   const { headerBytes } = parseHeader(packetBytes);
 
   let offset = 12;
-  // Fixed payload = 4193 (sId) + 4193 (rId) + 32 (ek) + 1568 (kemCt) + 4627 (sig) = 14613
-  const fixedPayloadLen = 4193 * 2 + 32 + 1568 + 4627;
+  // Fixed payload = 4225 (sId) + 4225 (rId) + 32 (ek) + 1568 (kemCt) + 4691 (sig) = 14741
+  const fixedPayloadLen = 4225 * 2 + 32 + 1568 + 4691;
   if (packetBytes.length < 12 + fixedPayloadLen + 16)
     throw new Error('INIT structural integrity fail');
 
-  const sIdBytes = packetBytes.slice(offset, (offset += 4193));
-  const rIdBytes = packetBytes.slice(offset, (offset += 4193));
+  const sIdBytes = packetBytes.slice(offset, (offset += 4225));
+  const rIdBytes = packetBytes.slice(offset, (offset += 4225));
   const ekPubBytes = packetBytes.slice(offset, (offset += 32));
   const kemCt = packetBytes.slice(offset, (offset += 1568));
-  const sig = packetBytes.slice(offset, (offset += 4627));
+  const sig = packetBytes.slice(offset, (offset += 4691));
   const ciphertext = packetBytes.slice(offset);
 
   if (memcmp(rIdBytes, localPubBytes)) throw new Error('INIT dest misrouted');
@@ -175,7 +175,7 @@ export async function ProcessInit(packetBytes: Uint8Array) {
     ekPubBytes,
     kemCt,
   );
-  if (!verifyMLDSA87(sig, sigInput, senderId.dsaPk))
+  if (!verifyComposite(sig, sigInput, senderId.ecPk, senderId.dsaPk))
     throw new Error('INIT signature rejected');
 
   let contact = await DB.get('contacts', senderFp);
