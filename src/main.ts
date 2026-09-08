@@ -125,7 +125,7 @@ async function renderSidebar() {
       if (session)
         unreadCount = msgs.filter(
           (m) =>
-            m.conversationId === session.conversationID &&
+            m.conversationId === session.conversationId &&
             !m.isMe &&
             m.timestamp > c.lastReadTimestamp,
         ).length;
@@ -259,7 +259,7 @@ async function renderChatLog() {
 
   const query = State.searchQuery.toLowerCase();
   const chatMsgs = msgs
-    .filter((m) => session && m.conversationId === session.conversationID)
+    .filter((m) => session && m.conversationId === session.conversationId)
     .sort((a, b) =>
       a.timestamp === b.timestamp
         ? a.id.localeCompare(b.id)
@@ -346,7 +346,7 @@ UI.$<HTMLInputElement>('#media-input').onchange = (e) => {
 UI.$<HTMLInputElement>('#chat-input').addEventListener('paste', (e) => {
   const items = e.clipboardData?.items;
   if (!items) return;
-  for (const item of items) {
+  for (const item of items)
     if (
       item.type.startsWith('image/') ||
       item.type.startsWith('video/') ||
@@ -364,7 +364,6 @@ UI.$<HTMLInputElement>('#chat-input').addEventListener('paste', (e) => {
       reader.readAsDataURL(file);
       break;
     }
-  }
 });
 
 UI.$('#btn-back-mobile').onclick = () => {
@@ -468,7 +467,7 @@ UI.$<HTMLFormElement>('#chat-form').onsubmit = async (e) => {
       );
       await DB.put('messages', {
         id: randomUUID(),
-        conversationId: newSession.conversationID,
+        conversationId: newSession.conversationId,
         isMe: true,
         text,
         timestamp: Date.now(),
@@ -478,7 +477,7 @@ UI.$<HTMLFormElement>('#chat-form').onsubmit = async (e) => {
       const packet = await EncryptMessage(session, text);
       await DB.put('messages', {
         id: randomUUID(),
-        conversationId: session.conversationID,
+        conversationId: session.conversationId,
         isMe: true,
         text,
         timestamp: Date.now(),
@@ -621,7 +620,7 @@ UI.$('#btn-delete-contact').onclick = async () => {
     try {
       await DB.delete('contacts', targetFp);
       await DB.delete('sessions', targetFp);
-      if (session) await DB.deleteConversation(session.conversationID);
+      if (session) await DB.deleteConversation(session.conversationId);
       UI.closeModal();
       resetChatView(true);
       UI.showToast('Peer Deleted');
@@ -652,7 +651,7 @@ UI.$('#btn-reset-session').onclick = async () => {
   UI.$('#btn-confirm-wipe').onclick = async () => {
     try {
       await DB.delete('sessions', targetFp);
-      await DB.deleteConversation(session.conversationID);
+      await DB.deleteConversation(session.conversationId);
       UI.closeModal();
       await renderChatLog();
       UI.showToast('Channel State Wiped');
@@ -724,7 +723,7 @@ async function processClipboardText(rawText: string) {
         const { session, plaintext, respPacket } = await ProcessInit(pktBytes);
         await DB.put('messages', {
           id: randomUUID(),
-          conversationId: session.conversationID,
+          conversationId: session.conversationId,
           isMe: false,
           text: plaintext,
           timestamp: Date.now(),
@@ -748,7 +747,7 @@ async function processClipboardText(rawText: string) {
         const { session, plaintext } = await DecryptMessage(pktBytes);
         await DB.put('messages', {
           id: randomUUID(),
-          conversationId: session.conversationID,
+          conversationId: session.conversationId,
           isMe: false,
           text: plaintext,
           timestamp: Date.now(),
@@ -818,7 +817,7 @@ async function showPeerMetadata(contactFp: string) {
   UI.$('#meta-state').textContent = session ? session.state : 'IDLE';
 
   if (session) {
-    UI.$('#meta-cid').textContent = session.conversationID;
+    UI.$('#meta-cid').textContent = session.conversationId;
     UI.$('#meta-ns').textContent = session.Ns.toString();
     UI.$('#meta-nr').textContent = session.Nr.toString();
     UI.$('#meta-pn').textContent = session.PN.toString();

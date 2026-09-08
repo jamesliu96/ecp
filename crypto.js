@@ -55,6 +55,14 @@ export const memcmp = (a, b) => {
             return a[i] < b[i] ? -1 : 1;
     return a.length === b.length ? 0 : a.length < b.length ? -1 : 1;
 };
+export const constantTimeCompare = (a, b) => {
+    if (a.length !== b.length)
+        return false;
+    let v = 0;
+    for (let i = 0; i < a.length; i++)
+        v |= a[i] ^ b[i];
+    return !v;
+};
 export { sha256 };
 export const hmacSHA256 = (keyBytes, msgBytes) => hmac(sha256, keyBytes, msgBytes);
 export const hkdfSHA256 = (ikm, salt, info, length) => hkdf(sha256, ikm, salt, info, length);

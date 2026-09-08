@@ -22,7 +22,7 @@ export interface Contact {
 export interface Session {
   contactFp: string;
   version: number;
-  conversationID: string;
+  conversationId: string;
   peerIdentity: string;
   DHs: { sk: Uint8Array; pk: Uint8Array };
   DHr?: { pk: Uint8Array };
@@ -35,7 +35,6 @@ export interface Session {
   SK?: Uint8Array;
   state: 'HANDSHAKE_SENT' | 'HANDSHAKE_RECEIVED' | 'ESTABLISHED';
   lastRespPacket?: string;
-  /** Keyed by `${dhPubBase64}_${sequenceNumber}` containing derived 32-byte MK */
   skippedKeys?: Record<string, string>;
 }
 

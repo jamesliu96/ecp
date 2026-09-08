@@ -1,6 +1,6 @@
 import { buildHeader, parseHeader } from './codec.js';
 import { Config } from './config.js';
-import { encodeBase64URL, decodeBase64URL, concatBytes, memcmp, sha256, hkdfSHA256, hmacSHA256, encryptGCM, decryptGCM, encapsulateMLKEM1024, decapsulateMLKEM1024, keygenX25519, getSharedSecretX25519, signComposite, verifyComposite, } from './crypto.js';
+import { encodeBase64URL, decodeBase64URL, concatBytes, memcmp, sha256, hkdfSHA256, hmacSHA256, encryptGCM, decryptGCM, encapsulateMLKEM1024, decapsulateMLKEM1024, keygenX25519, getSharedSecretX25519, signComposite, verifyComposite, constantTimeCompare, } from './crypto.js';
 import { getLocalFingerprint, getLocalIdentity, serializeIdentityPublic, parseIdentityPublic, calculateFingerprint, } from './identity.js';
 import { DB } from './storage.js';
 export async function CreateInit(contactFp, plaintextStr) {
@@ -48,7 +48,7 @@ export async function CreateInit(contactFp, plaintextStr) {
     const session = {
         contactFp,
         version: 1,
-        conversationID: encodeBase64URL(convIdHash.slice(0, 16)),
+        conversationId: encodeBase64URL(convIdHash.slice(0, 16)),
         peerIdentity: contact.bundle,
         DHs: { sk: ekKP.secretKey, pk: ekKP.publicKey },
         RK: hkdfSHA256(SK, new Uint8Array(32), new TextEncoder().encode('ECP-DR-ROOT-v1'), 32),
@@ -75,7 +75,7 @@ export async function ProcessInit(packetBytes) {
     const kemCt = packetBytes.slice(offset, (offset += 1568));
     const sig = packetBytes.slice(offset, (offset += 4691));
     const ciphertext = packetBytes.slice(offset);
-    if (memcmp(rIdBytes, localPubBytes))
+    if (!constantTimeCompare(rIdBytes, localPubBytes))
         throw new Error('INIT dest misrouted');
     const senderFp = calculateFingerprint(sIdBytes);
     const localFp = await getLocalFingerprint();
@@ -139,7 +139,7 @@ export async function ProcessInit(packetBytes) {
     const session = {
         contactFp: senderFp,
         version: 1,
-        conversationID: encodeBase64URL(convIdHash.slice(0, 16)),
+        conversationId: encodeBase64URL(convIdHash.slice(0, 16)),
         peerIdentity: contact.bundle,
         DHs: { sk: dhsKP.secretKey, pk: dhsPubBytes },
         DHr: { pk: ekPubBytes },
@@ -151,6 +151,7 @@ export async function ProcessInit(packetBytes) {
         state: 'ESTABLISHED',
         lastRespPacket: encodeBase64URL(respPacket),
     };
+    drIkm.fill(0);
     await DB.put('sessions', session);
     return {
         session,
@@ -202,10 +203,11 @@ export async function ProcessResp(packetBytes) {
     if (oldSK)
         oldSK.fill(0);
     oldRK.fill(0);
+    drIkm.fill(0);
     await DB.put('sessions', session);
     return { alreadyEstablished: false, session };
 }
-export function stepDH(s, rPubBytes) {
+function stepDH(s, rPubBytes) {
     if (rPubBytes) {
         const dh = getSharedSecretX25519(s.DHs.sk, rPubBytes);
         const drIkm = hkdfSHA256(dh, s.RK, new TextEncoder().encode('ECP-DR-RK-v1'), 64);
@@ -214,6 +216,7 @@ export function stepDH(s, rPubBytes) {
         s.CKr = drIkm.slice(32, 64);
         s.DHr = { pk: rPubBytes };
         oldRK.fill(0);
+        drIkm.fill(0);
     }
     const nkp = keygenX25519();
     if (!s.DHr)
@@ -227,6 +230,7 @@ export function stepDH(s, rPubBytes) {
     s.DHs = { sk: nkp.secretKey, pk: nkp.publicKey };
     oldDHsSk.fill(0);
     oldRK2.fill(0);
+    drIkm2.fill(0);
 }
 export async function EncryptMessage(session, plaintextStr) {
     if (session.state !== 'ESTABLISHED')
@@ -240,7 +244,7 @@ export async function EncryptMessage(session, plaintextStr) {
     const CK_next = hmacSHA256(sendingCK, new Uint8Array([0x02]));
     const aesKey = hkdfSHA256(MK, new Uint8Array(32), new TextEncoder().encode('ECP-AES256GCM-v1'), 32);
     const nonce = hmacSHA256(MK, new TextEncoder().encode('ECP-NONCE-v1'));
-    const cIdBytes = decodeBase64URL(session.conversationID);
+    const cIdBytes = decodeBase64URL(session.conversationId);
     const lPubBytes = serializeIdentityPublic(await getLocalIdentity());
     const headerVals = new Uint8Array(8);
     const dv = new DataView(headerVals.buffer);
@@ -278,8 +282,7 @@ export async function DecryptMessage(packetBytes) {
     offset += 4;
     const n = dv.getUint32(offset);
     offset += 4;
-    const sessions = await DB.getAll('sessions');
-    const session = sessions.find((s) => s.conversationID === encodeBase64URL(cIdBytes));
+    const session = await DB.getByIndex('sessions', 'conversationId', encodeBase64URL(cIdBytes));
     if (!session || !session.DHr)
         throw new Error('Orphaned payload');
     const aad = concatBytes(new TextEncoder().encode('ECP-MSG-v1'), cIdBytes, decodeBase64URL(session.peerIdentity), serializeIdentityPublic(await getLocalIdentity()), packetBytes.slice(12, 12 + 56));
@@ -302,13 +305,14 @@ export async function DecryptMessage(packetBytes) {
         await DB.put('sessions', session);
         return { session, plaintext: new TextDecoder().decode(ptext) };
     }
-    if (memcmp(dhPubBytes, session.DHr.pk)) {
+    if (!constantTimeCompare(dhPubBytes, session.DHr.pk)) {
         if (session.CKr) {
             while (session.Nr < pn) {
                 const skippedMK = hmacSHA256(session.CKr, new Uint8Array([0x01]));
                 const oldDhTag = encodeBase64URL(session.DHr.pk);
                 session.skippedKeys[`${oldDhTag}_${session.Nr}`] =
                     encodeBase64URL(skippedMK);
+                skippedMK.fill(0);
                 const nextCKr = hmacSHA256(session.CKr, new Uint8Array([0x02]));
                 session.CKr.fill(0);
                 session.CKr = nextCKr;

@@ -73,6 +73,16 @@ export const memcmp = (a: Uint8Array, b: Uint8Array) => {
   return a.length === b.length ? 0 : a.length < b.length ? -1 : 1;
 };
 
+export const constantTimeCompare = (
+  a: ArrayLike<number>,
+  b: ArrayLike<number>,
+) => {
+  if (a.length !== b.length) return false;
+  let v = 0;
+  for (let i = 0; i < a.length; i++) v |= a[i] ^ b[i];
+  return !v;
+};
+
 export { sha256 };
 
 export const hmacSHA256 = (keyBytes: Uint8Array, msgBytes: Uint8Array) =>

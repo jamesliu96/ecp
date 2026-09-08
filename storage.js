@@ -28,7 +28,9 @@ export const DB = (() => {
             if (!db.objectStoreNames.contains('contacts'))
                 db.createObjectStore('contacts', { keyPath: 'fingerprint' });
             if (!db.objectStoreNames.contains('sessions'))
-                db.createObjectStore('sessions', { keyPath: 'contactFp' });
+                db.createObjectStore('sessions', {
+                    keyPath: 'contactFp',
+                }).createIndex('conversationId', 'conversationId');
             if (!db.objectStoreNames.contains('messages'))
                 db.createObjectStore('messages', { keyPath: 'id' }).createIndex('conversationId', 'conversationId');
         };
@@ -46,16 +48,7 @@ export const DB = (() => {
                     .transaction(storeName, 'readonly')
                     .objectStore(storeName)
                     .get(key);
-                req.onsuccess = () => {
-                    let result = req.result;
-                    if (storeName === 'contacts' && result) {
-                        result.archived =
-                            result.archived || false;
-                        result.lastReadTimestamp =
-                            result.lastReadTimestamp || 0;
-                    }
-                    resolve(result);
-                };
+                req.onsuccess = () => resolve(req.result);
                 req.onerror = () => reject(req.error);
             });
         },
@@ -119,6 +112,24 @@ export const DB = (() => {
                 };
                 tx.oncomplete = () => resolve();
                 tx.onerror = () => reject(tx.error);
+            });
+        },
+        getByIndex: async (storeName, indexName, indexValue) => {
+            if (storeName === 'sessions' && !Settings.get().persistHandshakes) {
+                for (const session of memorySessions.values())
+                    if (session[indexName] === indexValue)
+                        return session;
+                return;
+            }
+            const db = await getDB();
+            return new Promise((resolve, reject) => {
+                const req = db
+                    .transaction(storeName, 'readonly')
+                    .objectStore(storeName)
+                    .index(indexName)
+                    .get(indexValue);
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
             });
         },
     };
