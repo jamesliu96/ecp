@@ -17,7 +17,14 @@ export async function CreateInit(contactFp, plaintextStr) {
     const ekKP = keygenX25519();
     const kemRes = encapsulateMLKEM1024(peerId.kemPk);
     const dh1 = getSharedSecretX25519(ekKP.secretKey, peerId.dhPk);
-    const SK = hkdfSHA256(concatBytes(new TextEncoder().encode('ECP-INIT-v1'), dh1, kemRes.sharedSecret), new Uint8Array(32), new TextEncoder().encode(''), 32);
+    let SK;
+    try {
+        SK = hkdfSHA256(concatBytes(new TextEncoder().encode('ECP-INIT-v1'), dh1, kemRes.sharedSecret), new Uint8Array(32), new TextEncoder().encode(''), 32);
+    }
+    finally {
+        dh1.fill(0);
+        kemRes.sharedSecret.fill(0);
+    }
     const sigInput = concatBytes(new TextEncoder().encode('ECP-INIT-v1'), localPubBytes, peerPubBytes, ekKP.publicKey, kemRes.cipherText);
     const sig = signComposite(sigInput, local.ecSk, local.dsaSk);
     const MK0 = hkdfSHA256(SK, new Uint8Array(32), new TextEncoder().encode('ECP-INIT-MESSAGE-v1'), 32);
@@ -91,7 +98,15 @@ export async function ProcessInit(packetBytes) {
         await DB.put('contacts', contact);
     }
     const dh1 = getSharedSecretX25519(local.dhSk, ekPubBytes);
-    const SK = hkdfSHA256(concatBytes(new TextEncoder().encode('ECP-INIT-v1'), dh1, decapsulateMLKEM1024(kemCt, local.kemSk)), new Uint8Array(32), new TextEncoder().encode(''), 32);
+    const kemSS = decapsulateMLKEM1024(kemCt, local.kemSk);
+    let SK;
+    try {
+        SK = hkdfSHA256(concatBytes(new TextEncoder().encode('ECP-INIT-v1'), dh1, kemSS), new Uint8Array(32), new TextEncoder().encode(''), 32);
+    }
+    finally {
+        dh1.fill(0);
+        kemSS.fill(0);
+    }
     const MK0 = hkdfSHA256(SK, new Uint8Array(32), new TextEncoder().encode('ECP-INIT-MESSAGE-v1'), 32);
     const aesKeyInit = hkdfSHA256(MK0, new Uint8Array(32), new TextEncoder().encode('ECP-AES256GCM-v1'), 32);
     const nonceBytes = hmacSHA256(MK0, new TextEncoder().encode('ECP-INIT-NONCE'));
@@ -150,22 +165,30 @@ export async function ProcessResp(packetBytes) {
     if (type !== Config.PACKET_TYPES.RESP)
         throw new Error('Protocol type mismatch');
     const sessions = await DB.getAll('sessions');
-    const session = sessions.find((s) => s.state === 'HANDSHAKE_SENT' || s.state === 'ESTABLISHED');
-    if (!session)
-        throw new Error('Unmatched RESP state');
-    if (session.state === 'ESTABLISHED')
-        return { alreadyEstablished: true, session };
-    if (!session.SK)
-        throw new Error('Handshake material purged');
-    const rKey = hkdfSHA256(session.SK, new Uint8Array(32), new TextEncoder().encode('ECP-RESP-v1'), 32);
-    const rNonce = hmacSHA256(session.SK, new TextEncoder().encode('ECP-RESP-NONCE-v1'));
+    const candidateSessions = sessions.filter((s) => s.state === 'HANDSHAKE_SENT' && s.SK);
+    let targetSession;
     let rPubBytes;
-    try {
-        rPubBytes = decryptGCM(rKey, rNonce.slice(0, 12), packetBytes.slice(12), headerBytes);
+    for (const session of candidateSessions) {
+        if (!session.SK)
+            continue;
+        const rKey = hkdfSHA256(session.SK, new Uint8Array(32), new TextEncoder().encode('ECP-RESP-v1'), 32);
+        const rNonce = hmacSHA256(session.SK, new TextEncoder().encode('ECP-RESP-NONCE-v1'));
+        try {
+            rPubBytes = decryptGCM(rKey, rNonce.slice(0, 12), packetBytes.slice(12), headerBytes);
+            targetSession = session;
+            break;
+        }
+        finally {
+            rKey.fill(0);
+        }
     }
-    finally {
-        rKey.fill(0);
+    if (!targetSession || !rPubBytes) {
+        const isEstablished = sessions.some((s) => s.state === 'ESTABLISHED');
+        if (isEstablished)
+            return { alreadyEstablished: true, session: sessions[0] };
+        throw new Error('Unmatched RESP authentication tag or state error');
     }
+    const session = targetSession;
     const dh2 = getSharedSecretX25519(session.DHs.sk, rPubBytes);
     const drIkm = hkdfSHA256(dh2, session.RK, new TextEncoder().encode('ECP-DR-RK-v1'), 64);
     const oldRK = session.RK;
@@ -251,6 +274,7 @@ export async function DecryptMessage(packetBytes) {
     const cIdBytes = packetBytes.slice(offset, (offset += 16));
     const dhPubBytes = packetBytes.slice(offset, (offset += 32));
     const dv = new DataView(packetBytes.buffer, packetBytes.byteOffset, packetBytes.byteLength);
+    const pn = dv.getUint32(offset);
     offset += 4;
     const n = dv.getUint32(offset);
     offset += 4;
@@ -259,7 +283,38 @@ export async function DecryptMessage(packetBytes) {
     if (!session || !session.DHr)
         throw new Error('Orphaned payload');
     const aad = concatBytes(new TextEncoder().encode('ECP-MSG-v1'), cIdBytes, decodeBase64URL(session.peerIdentity), serializeIdentityPublic(await getLocalIdentity()), packetBytes.slice(12, 12 + 56));
+    session.skippedKeys ??= {};
+    const dhKeyTag = encodeBase64URL(dhPubBytes);
+    const cacheKey = `${dhKeyTag}_${n}`;
+    if (session.skippedKeys[cacheKey]) {
+        const mk = decodeBase64URL(session.skippedKeys[cacheKey]);
+        delete session.skippedKeys[cacheKey];
+        const aesKey = hkdfSHA256(mk, new Uint8Array(32), new TextEncoder().encode('ECP-AES256GCM-v1'), 32);
+        const nonce = hmacSHA256(mk, new TextEncoder().encode('ECP-NONCE-v1'));
+        let ptext;
+        try {
+            ptext = decryptGCM(aesKey, nonce.slice(0, 12), packetBytes.slice(offset), aad);
+        }
+        finally {
+            aesKey.fill(0);
+            mk.fill(0);
+        }
+        await DB.put('sessions', session);
+        return { session, plaintext: new TextDecoder().decode(ptext) };
+    }
     if (memcmp(dhPubBytes, session.DHr.pk)) {
+        if (session.CKr) {
+            while (session.Nr < pn) {
+                const skippedMK = hmacSHA256(session.CKr, new Uint8Array([0x01]));
+                const oldDhTag = encodeBase64URL(session.DHr.pk);
+                session.skippedKeys[`${oldDhTag}_${session.Nr}`] =
+                    encodeBase64URL(skippedMK);
+                const nextCKr = hmacSHA256(session.CKr, new Uint8Array([0x02]));
+                session.CKr.fill(0);
+                session.CKr = nextCKr;
+                session.Nr++;
+            }
+        }
         session.PN = session.Ns;
         session.Ns = 0;
         session.Nr = 0;
@@ -272,9 +327,12 @@ export async function DecryptMessage(packetBytes) {
     while (session.Nr < n) {
         if (!session.CKr)
             throw new Error('CKr fault');
-        const prevCKr = session.CKr;
-        session.CKr = hmacSHA256(prevCKr, new Uint8Array([0x02]));
-        prevCKr.fill(0);
+        const skippedMK = hmacSHA256(session.CKr, new Uint8Array([0x01]));
+        session.skippedKeys[`${dhKeyTag}_${session.Nr}`] =
+            encodeBase64URL(skippedMK);
+        const nextCKr = hmacSHA256(session.CKr, new Uint8Array([0x02]));
+        session.CKr.fill(0);
+        session.CKr = nextCKr;
         session.Nr++;
     }
     if (!session.CKr)

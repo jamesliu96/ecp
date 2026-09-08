@@ -35,6 +35,8 @@ export interface Session {
   SK?: Uint8Array;
   state: 'HANDSHAKE_SENT' | 'HANDSHAKE_RECEIVED' | 'ESTABLISHED';
   lastRespPacket?: string;
+  /** Keyed by `${dhPubBase64}_${sequenceNumber}` containing derived 32-byte MK */
+  skippedKeys?: Record<string, string>;
 }
 
 export interface Message {
