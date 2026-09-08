@@ -3,8 +3,8 @@ import { hmac } from '@noble/hashes/hmac.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { gcm } from '@noble/ciphers/aes.js';
 import { x25519 } from '@noble/curves/ed25519.js';
-import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
-import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
+import { ml_dsa87 } from '@noble/post-quantum/ml-dsa.js';
+import { ml_kem1024 } from '@noble/post-quantum/ml-kem.js';
 export const getRandomValues = (array) => {
     const MAX_SIZE = 65536;
     if (array.length <= MAX_SIZE)
@@ -60,12 +60,12 @@ export const hmacSHA256 = (keyBytes, msgBytes) => hmac(sha256, keyBytes, msgByte
 export const hkdfSHA256 = (ikm, salt, info, length) => hkdf(sha256, ikm, salt, info, length);
 export const encryptGCM = (key, nonce, plaintext, aad) => gcm(key, nonce, aad).encrypt(plaintext);
 export const decryptGCM = (key, nonce, ciphertext, aad) => gcm(key, nonce, aad).decrypt(ciphertext);
-export const keygenMLDSA65 = ml_dsa65.keygen;
-export const signMLDSA65 = ml_dsa65.sign;
-export const verifyMLDSA65 = ml_dsa65.verify;
+export const keygenMLDSA87 = ml_dsa87.keygen;
+export const signMLDSA87 = ml_dsa87.sign;
+export const verifyMLDSA87 = ml_dsa87.verify;
 export const keygenX25519 = x25519.keygen;
 export const getSharedSecretX25519 = x25519.getSharedSecret;
-export const keygenMLKEM768 = ml_kem768.keygen;
-export const encapsulateMLKEM768 = ml_kem768.encapsulate;
-export const decapsulateMLKEM768 = ml_kem768.decapsulate;
+export const keygenMLKEM1024 = ml_kem1024.keygen;
+export const encapsulateMLKEM1024 = ml_kem1024.encapsulate;
+export const decapsulateMLKEM1024 = ml_kem1024.decapsulate;
 //# sourceMappingURL=crypto.js.map

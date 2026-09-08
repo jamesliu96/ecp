@@ -1,6 +1,6 @@
 import { buildHeader, parseHeader } from './codec.js';
 import { Config } from './config.js';
-import { concatBytes, decapsulateMLKEM768, decryptGCM, encapsulateMLKEM768, encryptGCM, decodeBase64URL, getSharedSecretX25519, hkdfSHA256, hmacSHA256, keygenX25519, memcmp, sha256, signMLDSA65, encodeBase64URL, verifyMLDSA65, } from './crypto.js';
+import { concatBytes, decapsulateMLKEM1024, decryptGCM, encapsulateMLKEM1024, encryptGCM, decodeBase64URL, getSharedSecretX25519, hkdfSHA256, hmacSHA256, keygenX25519, memcmp, sha256, signMLDSA87, encodeBase64URL, verifyMLDSA87, } from './crypto.js';
 import { getLocalFingerprint, getLocalIdentity, serializeIdentityPublic, parseIdentityPublic, calculateFingerprint, } from './identity.js';
 import { DB } from './storage.js';
 export async function CreateInit(contactFp, plaintextStr) {
@@ -15,11 +15,11 @@ export async function CreateInit(contactFp, plaintextStr) {
     const peerPubBytes = decodeBase64URL(contact.bundle);
     const peerId = parseIdentityPublic(peerPubBytes);
     const ekKP = keygenX25519();
-    const kemRes = encapsulateMLKEM768(peerId.kemPk);
+    const kemRes = encapsulateMLKEM1024(peerId.kemPk);
     const dh1 = getSharedSecretX25519(ekKP.secretKey, peerId.dhPk);
     const SK = hkdfSHA256(concatBytes(new TextEncoder().encode('ECP-INIT-v1'), dh1, kemRes.sharedSecret), new Uint8Array(32), new TextEncoder().encode(''), 32);
     const sigInput = concatBytes(new TextEncoder().encode('ECP-INIT-v1'), localPubBytes, peerPubBytes, ekKP.publicKey, kemRes.cipherText);
-    const sig = signMLDSA65(sigInput, local.dsaSk);
+    const sig = signMLDSA87(sigInput, local.dsaSk);
     const MK0 = hkdfSHA256(SK, new Uint8Array(32), new TextEncoder().encode('ECP-INIT-MESSAGE-v1'), 32);
     const aesKeyInit = hkdfSHA256(MK0, new Uint8Array(32), new TextEncoder().encode('ECP-AES256GCM-v1'), 32);
     const nonceInitBytes = hmacSHA256(MK0, new TextEncoder().encode('ECP-INIT-NONCE'));
@@ -59,14 +59,14 @@ export async function ProcessInit(packetBytes) {
     const localPubBytes = serializeIdentityPublic(local);
     const { headerBytes } = parseHeader(packetBytes);
     let offset = 12;
-    const fixedPayloadLen = 3169 * 2 + 32 + 1088 + 3309;
+    const fixedPayloadLen = 4193 * 2 + 32 + 1568 + 4627;
     if (packetBytes.length < 12 + fixedPayloadLen + 16)
         throw new Error('INIT structural integrity fail');
-    const sIdBytes = packetBytes.slice(offset, (offset += 3169));
-    const rIdBytes = packetBytes.slice(offset, (offset += 3169));
+    const sIdBytes = packetBytes.slice(offset, (offset += 4193));
+    const rIdBytes = packetBytes.slice(offset, (offset += 4193));
     const ekPubBytes = packetBytes.slice(offset, (offset += 32));
-    const kemCt = packetBytes.slice(offset, (offset += 1088));
-    const sig = packetBytes.slice(offset, (offset += 3309));
+    const kemCt = packetBytes.slice(offset, (offset += 1568));
+    const sig = packetBytes.slice(offset, (offset += 4627));
     const ciphertext = packetBytes.slice(offset);
     if (memcmp(rIdBytes, localPubBytes))
         throw new Error('INIT dest misrouted');
@@ -76,7 +76,7 @@ export async function ProcessInit(packetBytes) {
         throw new Error('Self-messaging prohibited: packet sent by local node.');
     const senderId = parseIdentityPublic(sIdBytes);
     const sigInput = concatBytes(new TextEncoder().encode('ECP-INIT-v1'), sIdBytes, rIdBytes, ekPubBytes, kemCt);
-    if (!verifyMLDSA65(sig, sigInput, senderId.dsaPk))
+    if (!verifyMLDSA87(sig, sigInput, senderId.dsaPk))
         throw new Error('INIT signature rejected');
     let contact = await DB.get('contacts', senderFp);
     if (!contact) {
@@ -91,7 +91,7 @@ export async function ProcessInit(packetBytes) {
         await DB.put('contacts', contact);
     }
     const dh1 = getSharedSecretX25519(local.dhSk, ekPubBytes);
-    const SK = hkdfSHA256(concatBytes(new TextEncoder().encode('ECP-INIT-v1'), dh1, decapsulateMLKEM768(kemCt, local.kemSk)), new Uint8Array(32), new TextEncoder().encode(''), 32);
+    const SK = hkdfSHA256(concatBytes(new TextEncoder().encode('ECP-INIT-v1'), dh1, decapsulateMLKEM1024(kemCt, local.kemSk)), new Uint8Array(32), new TextEncoder().encode(''), 32);
     const MK0 = hkdfSHA256(SK, new Uint8Array(32), new TextEncoder().encode('ECP-INIT-MESSAGE-v1'), 32);
     const aesKeyInit = hkdfSHA256(MK0, new Uint8Array(32), new TextEncoder().encode('ECP-AES256GCM-v1'), 32);
     const nonceBytes = hmacSHA256(MK0, new TextEncoder().encode('ECP-INIT-NONCE'));

@@ -744,8 +744,8 @@ function showMessageMetadata(msg) {
     <hr class="border-slate-800 my-2" />
     <div><strong>Symmetric Encryption:</strong> AES-256-GCM</div>
     <div><strong>Classical Key Exchange:</strong> X25519</div>
-    <div><strong>Post-Quantum KEM:</strong> ML-KEM-768</div>
-    <div><strong>Post-Quantum Signature:</strong> ML-DSA-65</div>
+    <div><strong>Post-Quantum KEM:</strong> ML-KEM-1024</div>
+    <div><strong>Post-Quantum Signature:</strong> ML-DSA-87</div>
     <div><strong>Key Derivation & Hashing:</strong> HKDF-SHA256 / HMAC-SHA256</div>
   `;
     UI.$('meta-frame').textContent = msg.id;

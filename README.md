@@ -6,7 +6,7 @@ A serverless, pure-frontend web implementation of the End-to-End Encrypted Clipb
 
 - **Zero-Backend Processing:** Operates strictly on the client side. Messages and media are exchanged out-of-band via user-selected transport channels, such as instant messengers, email, shared documents, social media, QR codes, or physical notes.
 - **Local Persistence:** Encrypted session states, keys, and identity profiles reside entirely within client-side `IndexedDB` storage.
-- **Post-Quantum Cryptography (PQC):** Combines classical cryptography with NIST Level 3 PQC standards via `@noble` libraries (`@noble/ciphers`, `@noble/curves`, `@noble/hashes`, `@noble/post-quantum`).
+- **Post-Quantum Cryptography (PQC):** Combines classical cryptography with NIST Level 5 PQC standards via `@noble` libraries (`@noble/ciphers`, `@noble/curves`, `@noble/hashes`, `@noble/post-quantum`).
 - **Zeroization & Memory Hygiene:** Ephemeral key material undergoes explicit zeroization immediately following cryptographic operations.
 
 ## Threat Model & Security Boundaries
@@ -14,8 +14,8 @@ A serverless, pure-frontend web implementation of the End-to-End Encrypted Clipb
 ### In-Scope Security Guarantees
 
 - **Transport Confidentiality & Integrity:** All ciphertexts copied to the clipboard remain secure even when transmitted over unencrypted or compromised communication channels.
-- **Post-Quantum Forward Secrecy:** Future quantum adversaries capturing current transport payloads cannot decrypt historical sessions due to hybrid X25519/ML-KEM-768 key encapsulation and Double Ratchet state advancement.
-- **Authenticity & Non-Repudiation:** Initial handshake signatures using ML-DSA-65 prevent active person-in-the-middle (PITM) identity spoofing.
+- **Post-Quantum Forward Secrecy:** Future quantum adversaries capturing current transport payloads cannot decrypt historical sessions due to hybrid X25519/ML-KEM-1024 key encapsulation and Double Ratchet state advancement.
+- **Authenticity & Non-Repudiation:** Initial handshake signatures using ML-DSA-87 prevent active person-in-the-middle (PITM) identity spoofing.
 
 ### Out-of-Scope Risks
 
@@ -60,8 +60,8 @@ The application is written in standard TypeScript and styled with Tailwind CSS v
 | Role                         | Primitive   | Specification / Key Length                              |
 | ---------------------------- | ----------- | ------------------------------------------------------- |
 | **Classical Key Exchange**   | X25519      | 256-bit ECDH Curve                                      |
-| **Post-Quantum KEM**         | ML-KEM-768  | FIPS 203 (1,184-byte Public Key, 1,088-byte Ciphertext) |
-| **Post-Quantum Signature**   | ML-DSA-65   | FIPS 204 (1,952-byte Public Key, 3,309-byte Signature)  |
+| **Post-Quantum KEM**         | ML-KEM-1024 | FIPS 203 (1,568-byte Public Key, 1,568-byte Ciphertext) |
+| **Post-Quantum Signature**   | ML-DSA-87   | FIPS 204 (2,592-byte Public Key, 4,627-byte Signature)  |
 | **Symmetric Encryption**     | AES-256-GCM | 256-bit Key, 96-bit Initialization Vector (IV)          |
 | **Key Derivation & Hashing** | HKDF / HMAC | HMAC-SHA256 / HKDF-SHA256                               |
 | **Wire Encoding**            | Base64URL   | Prefixed by ASCII string `e2e1:`                        |
@@ -80,28 +80,28 @@ All serialized wire payloads enforce a 50 MB limit and begin with a mandatory 12
 | `0x06` – `0x07` | Reserved       | `Bytes[2]` | Padding bytes for 32-bit alignment (`0x0000`)          |
 | `0x08` – `0x0B` | Payload Length | `UInt32BE` | Length of payload body in bytes (Big-Endian)           |
 
-### Identity Bundle Layout (3,169 Bytes Total)
+### Identity Bundle Layout (4,193 Bytes Total)
 
-| Field Name                | Offset (Bytes) | Size (Bytes) | Cryptographic Purpose               |
-| ------------------------- | -------------- | ------------ | ----------------------------------- |
-| **Bundle Version**        | `0`            | 1            | Format identifier (`0x01`)          |
-| **ML-DSA-65 Public Key**  | `1`            | 1,952        | Identity signature verification     |
-| **X25519 Public Key**     | `1953`         | 32           | Long-term classical static DH key   |
-| **ML-KEM-768 Public Key** | `1985`         | 1,184        | Static PQC KEM encapsulation target |
+| Field Name                 | Offset (Bytes) | Size (Bytes) | Cryptographic Purpose               |
+| -------------------------- | -------------- | ------------ | ----------------------------------- |
+| **Bundle Version**         | `0`            | 1            | Format identifier (`0x01`)          |
+| **ML-DSA-87 Public Key**   | `1`            | 2,592        | Identity signature verification     |
+| **X25519 Public Key**      | `2593`         | 32           | Long-term classical static DH key   |
+| **ML-KEM-1024 Public Key** | `2625`         | 1,568        | Static PQC KEM encapsulation target |
 
 ### Packet Types & Payload Specifications
 
 #### 1. INIT Packet Payload (`0x01`)
 
-Establishes the session, performs hybrid key agreement, and verifies mutual identity. To prevent parsing faults, the receiver enforces a strict minimum structural integrity size of 10,795 bytes (12-byte header + 10,767-byte fixed payload + 16-byte authentication tag).
+Establishes the session, performs hybrid key agreement, and verifies mutual identity. To prevent parsing faults, the receiver enforces a strict minimum structural integrity size of 14,641 bytes (12-byte header + 14,613-byte fixed payload + 16-byte authentication tag).
 
 | Size (Bytes) | Field                               | Description                                        |
 | ------------ | ----------------------------------- | -------------------------------------------------- |
-| 3,169        | **Sender Identity Bundle**          | Initiator's public Identity Bundle                 |
-| 3,169        | **Receiver Identity Bundle**        | Target peer's public Identity Bundle               |
+| 4,193        | **Sender Identity Bundle**          | Initiator's public Identity Bundle                 |
+| 4,193        | **Receiver Identity Bundle**        | Target peer's public Identity Bundle               |
 | 32           | **Ephemeral X25519 PK ($Ek_{pk}$)** | Ephemeral DH Public Key                            |
-| 1,088        | **ML-KEM Ciphertext ($KEM_{CT}$)**  | Encapsulated key against Receiver's ML-KEM PK      |
-| 3,309        | **ML-DSA Signature ($Sig$)**        | Signature over parameters verifying handshake      |
+| 1,568        | **ML-KEM Ciphertext ($KEM_{CT}$)**  | Encapsulated key against Receiver's ML-KEM PK      |
+| 4,627        | **ML-DSA Signature ($Sig$)**        | Signature over parameters verifying handshake      |
 | Variable     | **Encrypted Payload**               | AES-256-GCM ciphertext containing setup parameters |
 
 #### 2. RESP Packet Payload (`0x02`)
@@ -142,7 +142,7 @@ $$SK = \text{HKDF-SHA256}\left(\mathtt{"ECP-INIT-v1"} \parallel DH_1 \parallel K
 
 #### Initialization Signature
 
-Handshake integrity and authenticity are asserted by signing the concatenated parameter block using the sender's ML-DSA-65 private key:
+Handshake integrity and authenticity are asserted by signing the concatenated parameter block using the sender's ML-DSA-87 private key:
 
 $$Sig = \text{Sign}_{\text{ML-DSA}}\left(\mathtt{"ECP-INIT-v1"} \parallel SenderID \parallel ReceiverID \parallel Ek_{pk} \parallel KEM_{CT}\right)$$
 
