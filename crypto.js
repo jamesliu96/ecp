@@ -74,7 +74,7 @@ export const decryptGCM = (key, nonce, ciphertext, aad) => gcm(key, nonce, aad).
 export const keygenEd25519 = ed25519.keygen;
 export const keygenMLDSA87 = ml_dsa87.keygen;
 export const signComposite = (message, ecSk, dsaSk) => concatBytes(ed25519.sign(message, ecSk), ml_dsa87.sign(dsaSk, message));
-export const verifyComposite = (sig, message, ecPk, dsaPk) => sig.length >= 4691 &&
+export const verifyComposite = (sig, message, ecPk, dsaPk) => sig.length === 4691 &&
     ed25519.verify(sig.subarray(0, 64), message, ecPk) &&
     ml_dsa87.verify(sig.subarray(64, 4691), message, dsaPk);
 export const keygenX25519 = x25519.keygen;

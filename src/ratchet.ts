@@ -350,6 +350,8 @@ export async function ProcessResp(packetBytes: Uint8Array) {
       );
       targetSession = session;
       break;
+    } catch {
+      // Continue testing remaining candidate sessions if tag check fails
     } finally {
       rKey.fill(0);
     }
@@ -391,12 +393,17 @@ export async function ProcessResp(packetBytes: Uint8Array) {
 function stepDH(s: Session, rPubBytes?: Uint8Array) {
   if (rPubBytes) {
     const dh = getSharedSecretX25519(s.DHs.sk, rPubBytes);
-    const drIkm = hkdfSHA256(
-      dh,
-      s.RK,
-      new TextEncoder().encode('ECP-DR-RK-v1'),
-      64,
-    );
+    let drIkm: Uint8Array;
+    try {
+      drIkm = hkdfSHA256(
+        dh,
+        s.RK,
+        new TextEncoder().encode('ECP-DR-RK-v1'),
+        64,
+      );
+    } finally {
+      dh.fill(0);
+    }
     const oldRK = s.RK;
     s.RK = drIkm.slice(0, 32);
     s.CKr = drIkm.slice(32, 64);
@@ -408,12 +415,17 @@ function stepDH(s: Session, rPubBytes?: Uint8Array) {
   if (!s.DHr) throw new Error('Cannot step DH: Remote DH key (DHr) is missing');
 
   const dh2 = getSharedSecretX25519(nkp.secretKey, s.DHr.pk);
-  const drIkm2 = hkdfSHA256(
-    dh2,
-    s.RK,
-    new TextEncoder().encode('ECP-DR-RK-v1'),
-    64,
-  );
+  let drIkm2: Uint8Array;
+  try {
+    drIkm2 = hkdfSHA256(
+      dh2,
+      s.RK,
+      new TextEncoder().encode('ECP-DR-RK-v1'),
+      64,
+    );
+  } finally {
+    dh2.fill(0);
+  }
   const oldRK2 = s.RK;
   s.RK = drIkm2.slice(0, 32);
   s.CKs = drIkm2.slice(32, 64);
@@ -477,7 +489,10 @@ export async function EncryptMessage(session: Session, plaintextStr: string) {
   session.Ns++;
   oldCKs.fill(0);
 
+  // DO NOT delete lastRespPacket here, as it may be needed for retransmission
+  // delete session.lastRespPacket;
   await DB.put('sessions', session);
+
   return concatBytes(
     buildHeader(Config.PACKET_TYPES.MSG, payload.length),
     payload,
@@ -579,6 +594,7 @@ export async function DecryptMessage(packetBytes: Uint8Array) {
     const skippedMK = hmacSHA256(session.CKr, new Uint8Array([0x01]));
     session.skippedKeys[`${dhKeyTag}_${session.Nr}`] =
       encodeBase64URL(skippedMK);
+    skippedMK.fill(0);
 
     const nextCKr = hmacSHA256(session.CKr, new Uint8Array([0x02]));
     session.CKr.fill(0);

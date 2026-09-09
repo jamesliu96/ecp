@@ -133,7 +133,7 @@ export const verifyComposite = (
   ecPk: Uint8Array,
   dsaPk: Uint8Array,
 ) =>
-  sig.length >= 4691 &&
+  sig.length === 4691 &&
   ed25519.verify(sig.subarray(0, 64), message, ecPk) &&
   ml_dsa87.verify(sig.subarray(64, 4691), message, dsaPk);
 

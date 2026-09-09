@@ -252,7 +252,7 @@ async function renderChatLog() {
         frag.appendChild(div);
     }
     ctn.replaceChildren(frag);
-    const lastMsg = chatMsgs.length > 0 ? chatMsgs[chatMsgs.length - 1] : undefined;
+    const lastMsg = chatMsgs.length ? chatMsgs[chatMsgs.length - 1] : undefined;
     if (isNearBottom || lastMsg?.isMe)
         requestAnimationFrame(() => (ctn.scrollTop = ctn.scrollHeight));
 }
@@ -269,8 +269,7 @@ const submitChatMessage = async () => {
     isSending = true;
     input.disabled = true;
     try {
-        const sessions = await DB.getAll('sessions');
-        const session = sessions.find((s) => s.contactFp === State.currentContactFp);
+        const session = await DB.get('sessions', State.currentContactFp);
         if (!session) {
             const { packet, session: newSession } = await CreateInit(State.currentContactFp, text);
             await DB.put('messages', {
