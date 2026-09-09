@@ -174,6 +174,11 @@ export async function ProcessInit(packetBytes: Uint8Array) {
   if (senderFp === localFp)
     throw new Error('Self-messaging prohibited: packet sent by local node.');
 
+  const ekPubBase64 = encodeBase64URL(ekPubBytes);
+  const existingSession = await DB.get('sessions', senderFp);
+  if (existingSession && existingSession.usedInitEks?.includes(ekPubBase64))
+    throw new Error('INIT packet replay detected');
+
   const senderId = parseIdentityPublic(sIdBytes);
   const sigInput = concatBytes(
     new TextEncoder().encode('ECP-INIT-v1'),
@@ -303,6 +308,9 @@ export async function ProcessInit(packetBytes: Uint8Array) {
     PN: 0,
     state: 'ESTABLISHED',
     lastRespPacket: encodeBase64URL(respPacket),
+    usedInitEks: [...(existingSession?.usedInitEks ?? []), ekPubBase64].slice(
+      -20,
+    ),
   };
   drIkm.fill(0);
   await DB.put('sessions', session);
@@ -351,7 +359,6 @@ export async function ProcessResp(packetBytes: Uint8Array) {
       targetSession = session;
       break;
     } catch {
-      // Continue testing remaining candidate sessions if tag check fails
     } finally {
       rKey.fill(0);
     }
@@ -489,8 +496,6 @@ export async function EncryptMessage(session: Session, plaintextStr: string) {
   session.Ns++;
   oldCKs.fill(0);
 
-  // DO NOT delete lastRespPacket here, as it may be needed for retransmission
-  // delete session.lastRespPacket;
   await DB.put('sessions', session);
 
   return concatBytes(
@@ -541,7 +546,7 @@ export async function DecryptMessage(packetBytes: Uint8Array) {
 
   if (session.skippedKeys[cacheKey]) {
     const mk = decodeBase64URL(session.skippedKeys[cacheKey]);
-    delete session.skippedKeys[cacheKey];
+
     const aesKey = hkdfSHA256(
       mk,
       new Uint8Array(32),
@@ -558,6 +563,8 @@ export async function DecryptMessage(packetBytes: Uint8Array) {
         packetBytes.slice(offset),
         aad,
       );
+
+      delete session.skippedKeys[cacheKey];
     } finally {
       aesKey.fill(0);
       mk.fill(0);

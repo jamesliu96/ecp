@@ -66,8 +66,10 @@ export const DB = (() => {
 
   return {
     get: async <S extends StoreName>(storeName: S, key: string) => {
-      if (storeName === 'sessions' && !Settings.get().persistHandshakes)
-        return memorySessions.get(key) as StoreEntity[S] | undefined;
+      if (storeName === 'sessions' && !Settings.get().persistHandshakes) {
+        const val = memorySessions.get(key);
+        return val ? (structuredClone(val) as StoreEntity[S]) : undefined;
+      }
       const db = await getDB();
       return new Promise<StoreEntity[S] | undefined>((resolve, reject) => {
         const req = db
@@ -81,8 +83,10 @@ export const DB = (() => {
 
     put: async <S extends StoreName>(storeName: S, item: StoreEntity[S]) => {
       if (storeName === 'sessions' && !Settings.get().persistHandshakes) {
-        const s = item as Session;
-        memorySessions.set(s.contactFp, s);
+        memorySessions.set(
+          (item as Session).contactFp,
+          structuredClone(item) as Session,
+        );
         return;
       }
       const db = await getDB();
@@ -112,7 +116,9 @@ export const DB = (() => {
 
     getAll: async <S extends StoreName>(storeName: S) => {
       if (storeName === 'sessions' && !Settings.get().persistHandshakes)
-        return Array.from(memorySessions.values()) as StoreEntity[S][];
+        return Array.from(memorySessions.values()).map((v) =>
+          structuredClone(v),
+        ) as StoreEntity[S][];
       const db = await getDB();
       return new Promise<StoreEntity[S][]>((resolve, reject) => {
         const req = db
@@ -153,7 +159,7 @@ export const DB = (() => {
       if (storeName === 'sessions' && !Settings.get().persistHandshakes) {
         for (const session of memorySessions.values())
           if (session[indexName as keyof Session] === indexValue)
-            return session as StoreEntity[S];
+            return structuredClone(session) as StoreEntity[S];
         return;
       }
       const db = await getDB();
@@ -174,9 +180,11 @@ export const DB = (() => {
       indexValue: StoreEntity[S][K],
     ) => {
       if (storeName === 'sessions' && !Settings.get().persistHandshakes)
-        return Array.from(memorySessions.values()).filter(
-          (session) => session[indexName as keyof Session] === indexValue,
-        ) as StoreEntity[S][];
+        return Array.from(memorySessions.values())
+          .filter(
+            (session) => session[indexName as keyof Session] === indexValue,
+          )
+          .map((v) => structuredClone(v)) as StoreEntity[S][];
       const db = await getDB();
       return new Promise<StoreEntity[S][]>((resolve, reject) => {
         const req = db

@@ -40,8 +40,10 @@ export const DB = (() => {
     const getDB = async () => (dbInstance ??= await initDB());
     return {
         get: async (storeName, key) => {
-            if (storeName === 'sessions' && !Settings.get().persistHandshakes)
-                return memorySessions.get(key);
+            if (storeName === 'sessions' && !Settings.get().persistHandshakes) {
+                const val = memorySessions.get(key);
+                return val ? structuredClone(val) : undefined;
+            }
             const db = await getDB();
             return new Promise((resolve, reject) => {
                 const req = db
@@ -54,8 +56,7 @@ export const DB = (() => {
         },
         put: async (storeName, item) => {
             if (storeName === 'sessions' && !Settings.get().persistHandshakes) {
-                const s = item;
-                memorySessions.set(s.contactFp, s);
+                memorySessions.set(item.contactFp, structuredClone(item));
                 return;
             }
             const db = await getDB();
@@ -83,7 +84,7 @@ export const DB = (() => {
         },
         getAll: async (storeName) => {
             if (storeName === 'sessions' && !Settings.get().persistHandshakes)
-                return Array.from(memorySessions.values());
+                return Array.from(memorySessions.values()).map((v) => structuredClone(v));
             const db = await getDB();
             return new Promise((resolve, reject) => {
                 const req = db
@@ -118,7 +119,7 @@ export const DB = (() => {
             if (storeName === 'sessions' && !Settings.get().persistHandshakes) {
                 for (const session of memorySessions.values())
                     if (session[indexName] === indexValue)
-                        return session;
+                        return structuredClone(session);
                 return;
             }
             const db = await getDB();
@@ -134,7 +135,9 @@ export const DB = (() => {
         },
         getAllByIndex: async (storeName, indexName, indexValue) => {
             if (storeName === 'sessions' && !Settings.get().persistHandshakes)
-                return Array.from(memorySessions.values()).filter((session) => session[indexName] === indexValue);
+                return Array.from(memorySessions.values())
+                    .filter((session) => session[indexName] === indexValue)
+                    .map((v) => structuredClone(v));
             const db = await getDB();
             return new Promise((resolve, reject) => {
                 const req = db

@@ -81,6 +81,10 @@ export async function ProcessInit(packetBytes) {
     const localFp = await getLocalFingerprint();
     if (senderFp === localFp)
         throw new Error('Self-messaging prohibited: packet sent by local node.');
+    const ekPubBase64 = encodeBase64URL(ekPubBytes);
+    const existingSession = await DB.get('sessions', senderFp);
+    if (existingSession && existingSession.usedInitEks?.includes(ekPubBase64))
+        throw new Error('INIT packet replay detected');
     const senderId = parseIdentityPublic(sIdBytes);
     const sigInput = concatBytes(new TextEncoder().encode('ECP-INIT-v1'), sIdBytes, rIdBytes, ekPubBytes, kemCt);
     if (!verifyComposite(sig, sigInput, senderId.ecPk, senderId.dsaPk))
@@ -150,6 +154,7 @@ export async function ProcessInit(packetBytes) {
         PN: 0,
         state: 'ESTABLISHED',
         lastRespPacket: encodeBase64URL(respPacket),
+        usedInitEks: [...(existingSession?.usedInitEks ?? []), ekPubBase64].slice(-20),
     };
     drIkm.fill(0);
     await DB.put('sessions', session);
@@ -305,12 +310,12 @@ export async function DecryptMessage(packetBytes) {
     const cacheKey = `${dhKeyTag}_${n}`;
     if (session.skippedKeys[cacheKey]) {
         const mk = decodeBase64URL(session.skippedKeys[cacheKey]);
-        delete session.skippedKeys[cacheKey];
         const aesKey = hkdfSHA256(mk, new Uint8Array(32), new TextEncoder().encode('ECP-AES256GCM-v1'), 32);
         const nonce = hmacSHA256(mk, new TextEncoder().encode('ECP-NONCE-v1'));
         let ptext;
         try {
             ptext = decryptGCM(aesKey, nonce.slice(0, 12), packetBytes.slice(offset), aad);
+            delete session.skippedKeys[cacheKey];
         }
         finally {
             aesKey.fill(0);

@@ -36,6 +36,7 @@ export interface Session {
   state: 'HANDSHAKE_SENT' | 'HANDSHAKE_RECEIVED' | 'ESTABLISHED';
   lastRespPacket?: string;
   skippedKeys?: Record<string, string>;
+  usedInitEks?: string[];
 }
 
 export interface Message {

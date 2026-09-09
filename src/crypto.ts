@@ -37,10 +37,10 @@ export const encodeBase64URL = (v: Uint8Array) =>
     : btoa(
         (() => {
           let s = '';
-          for (let i = 0; i < v.length; i += 32768)
+          for (let i = 0; i < v.length; i += 8192)
             s += String.fromCharCode.apply(
               null,
-              Array.from(v.subarray(i, i + 32768)),
+              Array.from(v.subarray(i, i + 8192)),
             );
           return s;
         })(),
@@ -125,7 +125,7 @@ export const signComposite = (
   message: Uint8Array,
   ecSk: Uint8Array,
   dsaSk: Uint8Array,
-) => concatBytes(ed25519.sign(message, ecSk), ml_dsa87.sign(dsaSk, message));
+) => concatBytes(ed25519.sign(message, ecSk), ml_dsa87.sign(message, dsaSk));
 
 export const verifyComposite = (
   sig: Uint8Array,

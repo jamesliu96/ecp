@@ -27,8 +27,8 @@ export const encodeBase64URL = (v) => typeof v.toBase64 === 'function'
     ? v.toBase64({ alphabet: 'base64url', omitPadding: true })
     : btoa((() => {
         let s = '';
-        for (let i = 0; i < v.length; i += 32768)
-            s += String.fromCharCode.apply(null, Array.from(v.subarray(i, i + 32768)));
+        for (let i = 0; i < v.length; i += 8192)
+            s += String.fromCharCode.apply(null, Array.from(v.subarray(i, i + 8192)));
         return s;
     })())
         .replace(/\+/g, '-')
@@ -73,7 +73,7 @@ export const encryptGCM = (key, nonce, plaintext, aad) => gcm(key, nonce, aad).e
 export const decryptGCM = (key, nonce, ciphertext, aad) => gcm(key, nonce, aad).decrypt(ciphertext);
 export const keygenEd25519 = ed25519.keygen;
 export const keygenMLDSA87 = ml_dsa87.keygen;
-export const signComposite = (message, ecSk, dsaSk) => concatBytes(ed25519.sign(message, ecSk), ml_dsa87.sign(dsaSk, message));
+export const signComposite = (message, ecSk, dsaSk) => concatBytes(ed25519.sign(message, ecSk), ml_dsa87.sign(message, dsaSk));
 export const verifyComposite = (sig, message, ecPk, dsaPk) => sig.length === 4691 &&
     ed25519.verify(sig.subarray(0, 64), message, ecPk) &&
     ml_dsa87.verify(sig.subarray(64, 4691), message, dsaPk);
