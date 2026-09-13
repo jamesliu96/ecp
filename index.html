@@ -261,7 +261,7 @@
 
         <div
           id="empty-state"
-          class="absolute inset-0 flex items-center justify-center bg-slate-950 flex-col px-6 text-center z-0"
+          class="absolute inset-0 top-16 flex items-center justify-center bg-slate-950 flex-col px-6 text-center z-0"
         >
           <div
             class="w-16 h-16 mb-5 rounded-2xl bg-slate-900 flex items-center justify-center border border-slate-800/80 shadow-inner"
@@ -299,7 +299,7 @@
             <button
               type="button"
               id="btn-attach"
-              class="bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-emerald-400 px-2.5 sm:px-3 min-h-11 shrink-0 flex items-center justify-center cursor-pointer transition-colors border border-slate-700/80 rounded-lg"
+              class="bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-emerald-400 px-2.5 sm:px-3 min-h-11 shrink-0 flex items-center justify-center cursor-pointer transition-colors border border-slate-700/80 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
               aria-label="Attach Media"
             >
               <svg
@@ -339,7 +339,7 @@
             </button>
             <button
               type="submit"
-              class="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 sm:px-5 md:px-6 py-2 rounded-lg text-xs font-semibold min-h-11 cursor-pointer transition-all shadow-xs shrink-0"
+              class="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 sm:px-5 md:px-6 py-2 rounded-lg text-xs font-semibold min-h-11 cursor-pointer transition-all shadow-xs shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Send
             </button>

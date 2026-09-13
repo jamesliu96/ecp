@@ -239,23 +239,26 @@ async function renderChatLog() {
           : 'Handshake Pending';
       UI.$('#chat-status-dot').className =
         'w-2 h-2 rounded-full bg-amber-400 animate-pulse';
-      UI.$<HTMLInputElement>('#chat-input').disabled = UI.$<HTMLInputElement>(
-        '#media-input',
-      ).disabled = session.state === 'HANDSHAKE_SENT';
+      UI.$<HTMLInputElement>('#chat-input').disabled =
+        UI.$<HTMLInputElement>('#media-input').disabled =
+        UI.$<HTMLButtonElement>('#btn-attach').disabled =
+          session.state === 'HANDSHAKE_SENT';
     } else {
       UI.$('#chat-status-text').textContent = 'Channel Established';
       UI.$('#chat-status-dot').className =
         'w-2 h-2 rounded-full bg-emerald-400';
-      UI.$<HTMLInputElement>('#chat-input').disabled = UI.$<HTMLInputElement>(
-        '#media-input',
-      ).disabled = false;
+      UI.$<HTMLInputElement>('#chat-input').disabled =
+        UI.$<HTMLInputElement>('#media-input').disabled =
+        UI.$<HTMLButtonElement>('#btn-attach').disabled =
+          false;
     }
   else {
     UI.$('#chat-status-text').textContent = 'Idle';
     UI.$('#chat-status-dot').className = 'w-2 h-2 rounded-full bg-slate-500';
-    UI.$<HTMLInputElement>('#chat-input').disabled = UI.$<HTMLInputElement>(
-      '#media-input',
-    ).disabled = false;
+    UI.$<HTMLInputElement>('#chat-input').disabled =
+      UI.$<HTMLInputElement>('#media-input').disabled =
+      UI.$<HTMLButtonElement>('#btn-attach').disabled =
+        false;
   }
 
   const query = State.searchQuery.toLowerCase();
@@ -281,7 +284,7 @@ async function renderChatLog() {
 
   for (const m of chatMsgs) {
     const div = document.createElement('div');
-    div.className = `max-w-[85%] sm:max-w-[75%] p-3.5 rounded-2xl text-sm break-words shadow-sm border transition-all ${
+    div.className = `flex flex-col max-w-[85%] sm:max-w-[75%] p-3.5 rounded-2xl text-sm break-words shadow-sm border transition-all ${
       m.isMe
         ? 'bg-indigo-600 border-indigo-500/60 self-end rounded-br-xs text-indigo-50'
         : 'bg-slate-900 border-slate-800 self-start rounded-bl-xs text-slate-200'
@@ -322,10 +325,15 @@ async function renderChatLog() {
       }
     } else div.textContent = m.text;
 
-    div.oncontextmenu = (e) => {
-      e.preventDefault();
-      showMessageMetadata(m);
-    };
+    const timeSpan = document.createElement('div');
+    timeSpan.className = `text-[10px] mt-1.5 select-none flex justify-end ${
+      m.isMe ? 'text-indigo-200/80' : 'text-slate-400'
+    }`;
+    timeSpan.textContent = new Date(m.timestamp).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    div.appendChild(timeSpan);
 
     frag.appendChild(div);
   }
@@ -350,6 +358,9 @@ const submitChatMessage = async () => {
 
   isSending = true;
   input.disabled = true;
+
+  const submitBtn = UI.$<HTMLButtonElement>('#chat-form button[type="submit"]');
+  submitBtn.disabled = true;
 
   try {
     const session = await DB.get('sessions', State.currentContactFp);
@@ -391,6 +402,7 @@ const submitChatMessage = async () => {
     console.error('[Crypto] Outgoing processing error:', err);
   } finally {
     isSending = false;
+    submitBtn.disabled = false;
     await renderChatLog();
     if (!input.disabled) input.focus();
   }
@@ -822,12 +834,9 @@ async function showPeerMetadata(contactFp: string) {
         ? `<div><strong>Conversation ID:</strong> <span id="meta-cid"></span></div>
     <div><strong>Message Sequence (Ns):</strong> <span id="meta-ns"></span></div>
     <div><strong>Receive Sequence (Nr):</strong> <span id="meta-nr"></span></div>
-    <div><strong>Previous Chain Length (PN):</strong> <span id="meta-pn"></span></div>
-    <div><strong>Persisted:</strong> <span id="meta-persisted"></span></div>`
+    <div><strong>Previous Chain Length (PN):</strong> <span id="meta-pn"></span></div>`
         : ''
-    }
-    <div class="mt-4 text-[9px] text-slate-500 italic">* Ephemeral key material zeroized for memory hygiene</div>
-  `;
+    }`;
 
   UI.$('#meta-fp').textContent = contact ? contact.fingerprint : 'Unknown';
   UI.$('#meta-state').textContent = session ? session.state : 'IDLE';
@@ -837,36 +846,8 @@ async function showPeerMetadata(contactFp: string) {
     UI.$('#meta-ns').textContent = session.Ns.toString();
     UI.$('#meta-nr').textContent = session.Nr.toString();
     UI.$('#meta-pn').textContent = session.PN.toString();
-    UI.$('#meta-persisted').textContent = Settings.get().persistHandshakes
-      ? 'IndexedDB'
-      : 'Volatile';
   }
 
-  UI.$('#metadata-overlay').classList.remove('hidden');
-  UI.$('#metadata-overlay').classList.add('flex');
-}
-
-function showMessageMetadata(msg: Message) {
-  UI.$('#metadata-title').textContent = 'Frame Diagnostics';
-  UI.$('#metadata-content').innerHTML = `
-    <div><strong>Frame ID:</strong> <span id="meta-frame"></span></div>
-    <div><strong>Vector:</strong> <span id="meta-vector"></span></div>
-    <div><strong>Timestamp:</strong> <span id="meta-ts"></span> <small>(<span id="meta-ts-local"></span>)</small></div>
-    <hr class="border-slate-800 my-2" />
-    <div><strong>Symmetric Encryption:</strong> AES-256-GCM</div>
-    <div><strong>Classical Key Exchange:</strong> X25519</div>
-    <div><strong>Post-Quantum KEM:</strong> ML-KEM-1024</div>
-    <div><strong>Post-Quantum Signature:</strong> ML-DSA-87</div>
-    <div><strong>Key Derivation & Hashing:</strong> HKDF-SHA256 / HMAC-SHA256</div>
-  `;
-
-  UI.$('#meta-frame').textContent = msg.id;
-  UI.$('#meta-vector').textContent = msg.isMe
-    ? 'Egress (Local)'
-    : 'Ingress (Remote)';
-  const ts = new Date(msg.timestamp);
-  UI.$('#meta-ts').textContent = ts.toISOString();
-  UI.$('#meta-ts-local').textContent = ts.toLocaleString();
   UI.$('#metadata-overlay').classList.remove('hidden');
   UI.$('#metadata-overlay').classList.add('flex');
 }
