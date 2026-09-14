@@ -93,13 +93,13 @@ All serialized wire payloads enforce a 50 MB limit and begin with a mandatory 12
 
 Establishes the session, performs hybrid key agreement, and verifies mutual identity.
 
-| Size (Bytes) | Field                               | Description                                            |
-| ------------ | ----------------------------------- | ------------------------------------------------------ |
-| 4,225        | **Sender Identity Bundle**          | Initiator's public Identity Bundle                     |
-| 4,225        | **Receiver Identity Bundle**        | Target peer's public Identity Bundle                   |
-| 1,600        | **Hybrid Ephemeral PK ($Ek_{pk}$)** | Ephemeral X25519 PK (32B) + ML-KEM Ciphertext (1,568B) |
-| 4,691        | **Composite Signature ($Sig$)**     | Ed25519 Signature (64B) + ML-DSA-87 Signature (4,627B) |
-| Variable     | **Encrypted Payload**               | AES-256-GCM ciphertext containing setup parameters     |
+| Absolute Offset  | Field Name                          | Type / Size   | Description                                           |
+| ---------------- | ----------------------------------- | ------------- | ----------------------------------------------------- |
+| `12` – `4236`    | **Sender Identity Bundle**          | `Bytes[4225]` | Initiator's public Identity Bundle                    |
+| `4237` – `8461`  | **Receiver Identity Bundle**        | `Bytes[4225]` | Target peer's public Identity Bundle                  |
+| `8462` – `10061` | **Hybrid Ephemeral PK ($Ek_{pk}$)** | `Bytes[1600]` | Ephemeral X25519 PK (32B) + ML-KEM Ciphertext (1568B) |
+| `10062`–`14752`  | **Composite Signature ($Sig$)**     | `Bytes[4691]` | Ed25519 Signature (64B) + ML-DSA-87 Signature (4627B) |
+| `14753`+         | **Encrypted Payload**               | Variable      | AES-256-GCM ciphertext containing setup parameters    |
 
 #### 2. RESP Packet Payload (`0x02`)
 
@@ -125,6 +125,14 @@ Carries active Hybrid Double Ratchet session payloads.
 | `3196` – `3199` | Previous Chain Length ($PN$) | `UInt32BE`    | Number of messages sent in previous chain               |
 | `3200` – `3203` | Message Sequence ($N_s$)     | `UInt32BE`    | Message count index in current chain                    |
 | `3204`+         | Payload Ciphertext           | Variable      | AES-256-GCM message body and 16-byte authentication tag |
+
+### Authenticated Additional Data (AAD) Construction
+
+To bind ciphertexts to their exact wire headers and identities, AEAD operations require strict AAD constructions:
+
+- **INIT Packet (`0x01`):** `Header (12B) || SenderBundle (4225B) || ReceiverBundle (4225B) || Ek_pk (32B) || KEM_ct (1568B) || Sig (4691B)`
+- **RESP Packet (`0x02`):** `Header (12B)`
+- **MSG Packet (`0x03`):** `"ECP-MSG-v1" || ConvID (16B) || SenderIdentity (4225B) || ReceiverIdentity (4225B) || msgHdr (3192B)`
 
 ### Ratchet State Machine & Error Handling
 
