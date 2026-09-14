@@ -79,24 +79,39 @@ function resetChatView(updateHash = true) {
   UI.$('#empty-state').classList.remove('hidden');
 }
 
-async function handleOutgoing(packetBase64: string, bundleBase64?: string) {
+async function copyToClipboard(text: string, msg: string) {
   try {
-    await navigator.clipboard.writeText(
-      formatEnvelope(decodeBase64URL(bundleBase64 ?? packetBase64)),
-    );
-    UI.showToast(
-      `Encrypted ${typeof bundleBase64 !== 'undefined' ? 'Bundle' : 'Packet'} Copied`,
-    );
+    await navigator.clipboard.writeText(text);
+    UI.showToast(msg);
   } catch (err) {
-    UI.showToast('Clipboard Access Denied');
-    console.error('[Clipboard] Write error:', err);
+    console.warn('[Clipboard] Write error, falling back to modal:', err);
+    UI.showModal(`
+      <div class="p-4 border-b border-slate-800"><h3 class="font-bold text-slate-200">Manual Copy Required</h3></div>
+      <div class="p-4 space-y-3">
+        <p class="text-xs text-amber-400">Your browser blocked automatic clipboard access. Please copy the text below manually:</p>
+        <div id="fallback-text" class="flex min-h-11 items-center rounded-lg border border-slate-800/80 bg-slate-950 p-3 font-mono text-[11px] break-all text-emerald-300 shadow-inner select-all"></div>
+      </div>
+      <div class="p-4 flex justify-end gap-2 border-t border-slate-800/50">
+        <button id="btn-close-fallback" class="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg min-h-11 cursor-pointer transition-colors shadow-sm">Done</button>
+      </div>
+    `);
+    requestAnimationFrame(() => {
+      UI.$<HTMLDivElement>('#fallback-text').textContent = text;
+    });
+    UI.$('#btn-close-fallback').onclick = UI.closeModal;
   }
 }
 
+async function handleOutgoing(packetBase64: string, bundleBase64?: string) {
+  await copyToClipboard(
+    formatEnvelope(decodeBase64URL(bundleBase64 ?? packetBase64)),
+    `Encrypted ${typeof bundleBase64 !== 'undefined' ? 'Bundle' : 'Packet'} Copied`,
+  );
+}
+
 async function renderSidebar() {
-  const local = await getLocalIdentity();
   UI.$('#my-fingerprint').textContent = calculateFingerprint(
-    serializeIdentityPublic(local),
+    serializeIdentityPublic(await getLocalIdentity()),
   );
 
   let contacts = await DB.getAll('contacts');
@@ -448,15 +463,10 @@ UI.$('#btn-back-mobile').onclick = () => {
 };
 
 UI.$('#btn-copy-identity').onclick = async () => {
-  try {
-    const localIdentity = await getLocalIdentity();
-    const serialized = serializeIdentityPublic(localIdentity);
-    await navigator.clipboard.writeText(formatEnvelope(serialized));
-    UI.showToast('Identity Bundle Copied');
-  } catch (err) {
-    UI.showToast('Clipboard Access Denied');
-    console.error('[Clipboard] Identity copy error:', err);
-  }
+  await copyToClipboard(
+    formatEnvelope(serializeIdentityPublic(await getLocalIdentity())),
+    'Identity Bundle Copied',
+  );
 };
 
 UI.$('#btn-add-contact').onclick = async () => {
