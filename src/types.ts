@@ -26,6 +26,9 @@ export interface Session {
   peerIdentity: string;
   DHs: { sk: Uint8Array; pk: Uint8Array };
   DHr?: { pk: Uint8Array };
+  KEMs?: { sk: Uint8Array; pk: Uint8Array };
+  KEMr?: { pk: Uint8Array };
+  pendingKemCt?: Uint8Array;
   RK: Uint8Array;
   CKs?: Uint8Array;
   CKr?: Uint8Array;

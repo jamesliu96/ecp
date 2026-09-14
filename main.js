@@ -37,11 +37,20 @@ const UI = {
         UI.$('#modal-overlay').classList.remove('flex');
         UI.$('#modal-overlay').classList.add('hidden');
     },
+    closeMetadata: () => {
+        UI.$('#metadata-overlay').classList.add('hidden');
+        UI.$('#metadata-overlay').classList.remove('flex');
+    },
 };
-UI.$('#modal-overlay').onclick = () => {
-    UI.closeModal();
-};
+UI.$('#modal-overlay').onclick = () => UI.closeModal();
 const closePeerDropdown = () => UI.$('#peer-dropdown').classList.add('hidden');
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        UI.closeModal();
+        UI.closeMetadata();
+        closePeerDropdown();
+    }
+});
 function resetChatView(updateHash = true) {
     delete State.currentContactFp;
     if (updateHash && location.hash)
@@ -113,7 +122,7 @@ async function renderSidebar() {
             const badge = document.createElement('span');
             badge.className =
                 'bg-emerald-500 text-slate-950 text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 shadow-sm';
-            badge.textContent = unreadCount.toString();
+            badge.textContent = `${unreadCount}`;
             topRow.appendChild(badge);
         }
         const botRow = document.createElement('div');
@@ -173,11 +182,11 @@ async function selectContact(fp, isNavigatingHistory = false) {
     State.searchQuery = '';
     UI.$('#chat-search-input').value = '';
     UI.$('#search-bar-container').classList.add('hidden');
-    await renderChatLog();
+    await renderChatLog(true);
     await renderSidebar();
 }
 let renderSeq = 0;
-async function renderChatLog() {
+async function renderChatLog(isInitialView = false) {
     if (!State.currentContactFp)
         return;
     const currentSeq = ++renderSeq;
@@ -224,9 +233,12 @@ async function renderChatLog() {
         ? a.id.localeCompare(b.id)
         : a.timestamp - b.timestamp);
     const ctn = UI.$('#chat-messages');
-    const isNearBottom = ctn.scrollHeight - ctn.scrollTop - ctn.clientHeight < 150;
     const frag = document.createDocumentFragment();
+    let displayedCount = 0;
     for (const m of chatMsgs) {
+        if (query && !m.text.toLowerCase().includes(query))
+            continue;
+        displayedCount++;
         const div = document.createElement('div');
         div.className = `flex flex-col max-w-[85%] sm:max-w-[75%] p-3.5 rounded-2xl text-sm break-words shadow-sm border transition-all ${m.isMe
             ? 'bg-indigo-600 border-indigo-500/60 self-end rounded-br-xs text-indigo-50'
@@ -274,9 +286,17 @@ async function renderChatLog() {
         div.appendChild(timeSpan);
         frag.appendChild(div);
     }
+    if (query && !displayedCount) {
+        const emptySearch = document.createElement('div');
+        emptySearch.className =
+            'flex flex-col items-center justify-center my-auto py-12 text-slate-500 text-xs';
+        emptySearch.textContent = 'No matching messages found';
+        frag.appendChild(emptySearch);
+    }
     ctn.replaceChildren(frag);
-    const lastMsg = chatMsgs.length ? chatMsgs[chatMsgs.length - 1] : undefined;
-    if (isNearBottom || lastMsg?.isMe)
+    if (isInitialView)
+        ctn.scrollTop = ctn.scrollHeight;
+    else
         requestAnimationFrame(() => {
             ctn.scrollTo({ top: ctn.scrollHeight, behavior: 'smooth' });
         });
@@ -669,7 +689,7 @@ async function processClipboardText(rawText) {
                     sessionChanged = true;
                 }
                 else if (type === Config.PACKET_TYPES.RESP) {
-                    const { alreadyEstablished, session } = await ProcessResp(pktBytes);
+                    const { alreadyEstablished } = await ProcessResp(pktBytes);
                     if (alreadyEstablished)
                         console.warn('[Ratchet] Skipping redundant RESP packet in bundle.');
                     else {
@@ -753,21 +773,15 @@ async function showPeerMetadata(contactFp) {
     UI.$('#meta-state').textContent = session ? session.state : 'IDLE';
     if (session) {
         UI.$('#meta-cid').textContent = session.conversationId;
-        UI.$('#meta-ns').textContent = session.Ns.toString();
-        UI.$('#meta-nr').textContent = session.Nr.toString();
-        UI.$('#meta-pn').textContent = session.PN.toString();
+        UI.$('#meta-ns').textContent = `${session.Ns}`;
+        UI.$('#meta-nr').textContent = `${session.Nr}`;
+        UI.$('#meta-pn').textContent = `${session.PN}`;
     }
     UI.$('#metadata-overlay').classList.remove('hidden');
     UI.$('#metadata-overlay').classList.add('flex');
 }
-UI.$('#metadata-overlay').onclick = () => {
-    UI.$('#metadata-overlay').classList.add('hidden');
-    UI.$('#metadata-overlay').classList.remove('flex');
-};
-UI.$('#btn-close-metadata').onclick = () => {
-    UI.$('#metadata-overlay').classList.add('hidden');
-    UI.$('#metadata-overlay').classList.remove('flex');
-};
+UI.$('#metadata-overlay').onclick = () => UI.closeMetadata();
+UI.$('#btn-close-metadata').onclick = () => UI.closeMetadata();
 async function handleRoute() {
     const hash = location.hash.replace(/^#/, '').trim();
     if (!hash) {

@@ -14,7 +14,7 @@ A serverless, pure-frontend web implementation of the End-to-End Encrypted Clipb
 ### In-Scope Security Guarantees
 
 - **Transport Confidentiality & Integrity:** All ciphertexts copied to the clipboard remain secure even when transmitted over unencrypted or compromised communication channels.
-- **Post-Quantum Forward Secrecy:** Future quantum adversaries capturing current transport payloads cannot decrypt historical sessions due to hybrid **ECDH + ML-KEM-1024** key encapsulation and Double Ratchet state advancement.
+- **Post-Quantum Forward Secrecy & Break-In Recovery:** Every Double Ratchet turn continuously encapsulates a fresh **ML-KEM-1024** shared secret alongside classical **X25519** ECDH. Future quantum adversaries capturing transport payloads cannot decrypt historical or future sessions even if ephemeral ECDH keys are compromised.
 - **Authenticity & Non-Repudiation:** Initial handshake signatures using composite **ECDSA + ML-DSA-87** prevent active person-in-the-middle (PITM) identity spoofing.
 
 ### Out-of-Scope Risks
@@ -26,7 +26,7 @@ A serverless, pure-frontend web implementation of the End-to-End Encrypted Clipb
 
 1. **Identity Generation:** Automatically generates a persistent cryptographic identity upon initial application boot.
 2. **Peer Registration:** Users exchange out-of-band public identity bundles to add contacts.
-3. **Session Initialization:** The initiator generates an `INIT` payload packet and transmits it to the peer to establish a Double Ratchet session.
+3. **Session Initialization:** The initiator generates an `INIT` payload packet and transmits it to the peer to establish a Hybrid Double Ratchet session.
 4. **Encrypted Exchange:** Ciphertexts and media Data URIs are copied directly to the clipboard, transmitted across any third-party app, and pasted by the recipient to decrypt.
 
 ## Development & Build Pipeline
@@ -103,23 +103,28 @@ Establishes the session, performs hybrid key agreement, and verifies mutual iden
 
 #### 2. RESP Packet Payload (`0x02`)
 
-Acknowledges initialization.
+Acknowledges initialization and establishes the receiving ratchet chain.
 
-| Size (Bytes) | Field                 | Description                                                                                                     |
-| ------------ | --------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Variable     | **Encrypted Payload** | AES-256-GCM payload containing Responder Hybrid Ephemeral Public Key (X25519 + ML-KEM) + GCM Authentication Tag |
+| Decrypted Offset | Field Name                    | Type / Size   | Description                                      |
+| ---------------- | ----------------------------- | ------------- | ------------------------------------------------ |
+| `0` – `31`       | Responder Ephemeral DH PK     | `Bytes[32]`   | Responder X25519 Ephemeral Public Key            |
+| `32` – `1599`    | ML-KEM Encapsulation CT       | `Bytes[1568]` | Encapsulated secret to Initiator's static ML-KEM |
+| `1600` – `3167`  | Responder Ephemeral ML-KEM PK | `Bytes[1568]` | New ML-KEM Public Key for future ratchet steps   |
+| `3168`+          | AES-256-GCM Tag               | `Bytes[16]`   | AEAD authentication tag                          |
 
 #### 3. MSG Packet Payload (`0x03`)
 
-Carries active Double Ratchet session payloads.
+Carries active Hybrid Double Ratchet session payloads.
 
-| Absolute Offset | Field Name                   | Type / Size | Description                                             |
-| --------------- | ---------------------------- | ----------- | ------------------------------------------------------- |
-| `12` – `27`     | Conversation ID              | `Bytes[16]` | Pseudorandom session identifier                         |
-| `28` – `59`     | Ephemeral DH Key             | `Bytes[32]` | Current ratchet step X25519 Public Key                  |
-| `60` – `63`     | Previous Chain Length ($PN$) | `UInt32BE`  | Number of messages sent in previous chain               |
-| `64` – `67`     | Message Sequence ($N_s$)     | `UInt32BE`  | Message count index in current chain                    |
-| `68`+           | Payload Ciphertext           | Variable    | AES-256-GCM message body and 16-byte authentication tag |
+| Absolute Offset | Field Name                   | Type / Size   | Description                                             |
+| --------------- | ---------------------------- | ------------- | ------------------------------------------------------- |
+| `12` – `27`     | Conversation ID              | `Bytes[16]`   | Pseudorandom session identifier                         |
+| `28` – `59`     | Ephemeral DH Key             | `Bytes[32]`   | Current ratchet step X25519 Public Key                  |
+| `60` – `1627`   | ML-KEM Ciphertext            | `Bytes[1568]` | Encapsulated secret for current ratchet step            |
+| `1628` – `3195` | Ephemeral ML-KEM PK          | `Bytes[1568]` | Fresh ML-KEM Public Key for peer's next ratchet turn    |
+| `3196` – `3199` | Previous Chain Length ($PN$) | `UInt32BE`    | Number of messages sent in previous chain               |
+| `3200` – `3203` | Message Sequence ($N_s$)     | `UInt32BE`    | Message count index in current chain                    |
+| `3204`+         | Payload Ciphertext           | Variable      | AES-256-GCM message body and 16-byte authentication tag |
 
 ### Ratchet State Machine & Error Handling
 
@@ -127,7 +132,7 @@ To maintain synchronization and prevent abuse, ECP dictates specific constraints
 
 - **Sequence Progression & Replay Drop:** The protocol demands strict forward progression. During `DecryptMessage`, the parsed sequence number ($N$) is compared against the expected receive sequence ($N_r$). If $N < N_r$, the message is dropped immediately, throwing a `"Message frame out of order or replayed"` error.
 - **Gap Limitation & Skipped Keys:** ECP handles dropped packets by advancing the receiving chain up to the target sequence $N$. To prevent CPU exhaustion or memory starvation attacks via continuous HMAC chaining, ECP enforces a strict limit: if $N - N_r > 2000$, it throws an `"Excessive message gap"` exception.
-- **Ephemeral Zeroization:** During skipped frame advancement ($N_r < N$), intermediate receiving chain keys ($CK_r$) are wiped from RAM using `.fill(0)` immediately after generating the next step.
+- **Ephemeral Zeroization:** During skipped frame advancement ($N_r < N$) and standard ratchet steps, intermediate receiving chain keys ($CK_r$), root keys ($RK$), and shared secrets ($DH$, $KEM_{SS}$) are wiped from RAM using `.fill(0)` immediately after use.
 
 ### Cryptographic Derivations & Formulas
 
@@ -143,9 +148,15 @@ Handshake integrity and authenticity are asserted by signing the concatenated pa
 
 $$Sig = \text{Sign}_{\text{Ed25519+ML-DSA-87}}\left(\mathtt{"ECP-INIT-v1"} \parallel SenderID \parallel ReceiverID \parallel Ek_{pk} \parallel KEM_{CT}\right)$$
 
-#### Symmetric Double Ratchet Chains
+#### Hybrid Double Ratchet Steps
 
-Chain Keys ($CK$) and Message Keys ($MK$) advance via HMAC-SHA256 step derivation:
+Each DH ratchet turn advances the Root Key ($RK$) and derives new Chain Keys ($CK$) by combining X25519 ECDH and ML-KEM-1024 shared secrets:
+
+$$RK_{i+1} \parallel CK_{i+1} = \text{HKDF-SHA256}\left(DH_{\text{shared}} \parallel KEM_{\text{SS}}, RK_i, \mathtt{"ECP-DR-RK-v1"}, 64\right)$$
+
+#### Symmetric Chain Progression
+
+Chain Keys ($CK$) and Message Keys ($MK$) advance within a chain via HMAC-SHA256:
 
 $$
 \begin{aligned}

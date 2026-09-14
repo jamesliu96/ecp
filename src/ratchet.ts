@@ -14,6 +14,7 @@ import {
   decapsulateMLKEM1024,
   keygenX25519,
   getSharedSecretX25519,
+  keygenMLKEM1024,
   signComposite,
   verifyComposite,
   constantTimeCompare,
@@ -133,6 +134,8 @@ export async function CreateInit(contactFp: string, plaintextStr: string) {
     conversationId: encodeBase64URL(convIdHash.slice(0, 16)),
     peerIdentity: contact.bundle,
     DHs: { sk: ekKP.secretKey, pk: ekKP.publicKey },
+    KEMs: { sk: local.kemSk, pk: local.kemPk },
+    KEMr: { pk: peerId.kemPk },
     RK: hkdfSHA256(
       SK,
       new Uint8Array(32),
@@ -256,14 +259,22 @@ export async function ProcessInit(packetBytes: Uint8Array) {
     32,
   );
   const dhsKP = keygenX25519();
-  const dhsPubBytes = dhsKP.publicKey;
+  const nkemKP = keygenMLKEM1024();
   const dh2 = getSharedSecretX25519(dhsKP.secretKey, ekPubBytes);
-  const drIkm = hkdfSHA256(
-    dh2,
-    RK0,
-    new TextEncoder().encode('ECP-DR-RK-v1'),
-    64,
-  );
+  const kemRes2 = encapsulateMLKEM1024(senderId.kemPk);
+
+  let drIkm: Uint8Array;
+  try {
+    drIkm = hkdfSHA256(
+      concatBytes(dh2, kemRes2.sharedSecret),
+      RK0,
+      new TextEncoder().encode('ECP-DR-RK-v1'),
+      64,
+    );
+  } finally {
+    dh2.fill(0);
+    kemRes2.sharedSecret.fill(0);
+  }
 
   const cmp = memcmp(localPubBytes, sIdBytes);
   const convIdHash = sha256(
@@ -284,11 +295,19 @@ export async function ProcessInit(packetBytes: Uint8Array) {
     SK,
     new TextEncoder().encode('ECP-RESP-NONCE-v1'),
   );
-  const respHdr = buildHeader(Config.PACKET_TYPES.RESP, 48);
+  const respPayload = concatBytes(
+    dhsKP.publicKey,
+    kemRes2.cipherText,
+    nkemKP.publicKey,
+  );
+  const respHdr = buildHeader(
+    Config.PACKET_TYPES.RESP,
+    respPayload.length + 16,
+  );
 
   let respCt: Uint8Array;
   try {
-    respCt = encryptGCM(respKey, respNonce.slice(0, 12), dhsPubBytes, respHdr);
+    respCt = encryptGCM(respKey, respNonce.slice(0, 12), respPayload, respHdr);
   } finally {
     respKey.fill(0);
   }
@@ -299,8 +318,11 @@ export async function ProcessInit(packetBytes: Uint8Array) {
     version: 1,
     conversationId: encodeBase64URL(convIdHash.slice(0, 16)),
     peerIdentity: contact.bundle,
-    DHs: { sk: dhsKP.secretKey, pk: dhsPubBytes },
+    DHs: { sk: dhsKP.secretKey, pk: dhsKP.publicKey },
     DHr: { pk: ekPubBytes },
+    KEMs: { sk: nkemKP.secretKey, pk: nkemKP.publicKey },
+    KEMr: { pk: senderId.kemPk },
+    pendingKemCt: kemRes2.cipherText,
     RK: drIkm.slice(0, 32),
     CKs: drIkm.slice(32, 64),
     Ns: 0,
@@ -322,7 +344,7 @@ export async function ProcessInit(packetBytes: Uint8Array) {
 }
 
 export async function ProcessResp(packetBytes: Uint8Array) {
-  if (packetBytes.length < 60) throw new Error('RESP packet truncated');
+  if (packetBytes.length < 3196) throw new Error('RESP packet truncated');
 
   const { type, headerBytes } = parseHeader(packetBytes);
   if (type !== Config.PACKET_TYPES.RESP)
@@ -334,7 +356,7 @@ export async function ProcessResp(packetBytes: Uint8Array) {
   );
 
   let targetSession: Session | undefined;
-  let rPubBytes: Uint8Array | undefined;
+  let respPlaintext: Uint8Array | undefined;
 
   for (const session of candidateSessions) {
     if (!session.SK) continue;
@@ -350,7 +372,7 @@ export async function ProcessResp(packetBytes: Uint8Array) {
     );
 
     try {
-      rPubBytes = decryptGCM(
+      respPlaintext = decryptGCM(
         rKey,
         rNonce.slice(0, 12),
         packetBytes.slice(12),
@@ -364,7 +386,7 @@ export async function ProcessResp(packetBytes: Uint8Array) {
     }
   }
 
-  if (!targetSession || !rPubBytes) {
+  if (!targetSession || !respPlaintext) {
     const isEstablished = sessions.some((s) => s.state === 'ESTABLISHED');
     if (isEstablished)
       return { alreadyEstablished: true, session: sessions[0] };
@@ -372,24 +394,39 @@ export async function ProcessResp(packetBytes: Uint8Array) {
   }
 
   const session = targetSession;
-  const dh2 = getSharedSecretX25519(session.DHs.sk, rPubBytes);
-  const drIkm = hkdfSHA256(
-    dh2,
-    session.RK,
-    new TextEncoder().encode('ECP-DR-RK-v1'),
-    64,
-  );
+  const dhsPubBytes = respPlaintext.slice(0, 32);
+  const kemCt = respPlaintext.slice(32, 1600);
+  const kemPubBytes = respPlaintext.slice(1600, 3168);
+
+  const local = await getLocalIdentity();
+  const dh2 = getSharedSecretX25519(session.DHs.sk, dhsPubBytes);
+  const kemSS2 = decapsulateMLKEM1024(kemCt, local.kemSk);
+
+  let drIkm: Uint8Array;
+  try {
+    drIkm = hkdfSHA256(
+      concatBytes(dh2, kemSS2),
+      session.RK,
+      new TextEncoder().encode('ECP-DR-RK-v1'),
+      64,
+    );
+  } finally {
+    dh2.fill(0);
+    kemSS2.fill(0);
+  }
 
   const oldRK = session.RK;
   session.RK = drIkm.slice(0, 32);
   session.CKr = drIkm.slice(32, 64);
   delete session.CKs;
-  session.DHr = { pk: rPubBytes };
+  session.DHr = { pk: dhsPubBytes };
+  session.KEMs = { sk: local.kemSk, pk: local.kemPk };
+  session.KEMr = { pk: kemPubBytes };
   session.state = 'ESTABLISHED';
 
   const oldSK = session.SK;
   delete session.SK;
-  if (oldSK) oldSK.fill(0);
+  oldSK?.fill(0);
   oldRK.fill(0);
   drIkm.fill(0);
 
@@ -397,49 +434,70 @@ export async function ProcessResp(packetBytes: Uint8Array) {
   return { alreadyEstablished: false, session };
 }
 
-function stepDH(s: Session, rPubBytes?: Uint8Array) {
-  if (rPubBytes) {
+function stepDH(
+  s: Session,
+  rPubBytes?: Uint8Array,
+  rKemCt?: Uint8Array,
+  rKemPubBytes?: Uint8Array,
+) {
+  if (rPubBytes && rKemCt && rKemPubBytes) {
+    if (!s.KEMs) throw new Error('Cannot step DH: Local KEM key missing');
     const dh = getSharedSecretX25519(s.DHs.sk, rPubBytes);
+    const kemSS = decapsulateMLKEM1024(rKemCt, s.KEMs.sk);
     let drIkm: Uint8Array;
     try {
       drIkm = hkdfSHA256(
-        dh,
+        concatBytes(dh, kemSS),
         s.RK,
         new TextEncoder().encode('ECP-DR-RK-v1'),
         64,
       );
     } finally {
       dh.fill(0);
+      kemSS.fill(0);
     }
     const oldRK = s.RK;
     s.RK = drIkm.slice(0, 32);
     s.CKr = drIkm.slice(32, 64);
     s.DHr = { pk: rPubBytes };
+    s.KEMr = { pk: rKemPubBytes };
     oldRK.fill(0);
     drIkm.fill(0);
   }
-  const nkp = keygenX25519();
-  if (!s.DHr) throw new Error('Cannot step DH: Remote DH key (DHr) is missing');
 
+  if (!s.DHr || !s.KEMr)
+    throw new Error('Cannot step DH: Remote DH or KEM key missing');
+
+  const nkp = keygenX25519();
+  const nkem = keygenMLKEM1024();
+  const kemRes = encapsulateMLKEM1024(s.KEMr.pk);
   const dh2 = getSharedSecretX25519(nkp.secretKey, s.DHr.pk);
+
   let drIkm2: Uint8Array;
   try {
     drIkm2 = hkdfSHA256(
-      dh2,
+      concatBytes(dh2, kemRes.sharedSecret),
       s.RK,
       new TextEncoder().encode('ECP-DR-RK-v1'),
       64,
     );
   } finally {
     dh2.fill(0);
+    kemRes.sharedSecret.fill(0);
   }
+
   const oldRK2 = s.RK;
   s.RK = drIkm2.slice(0, 32);
   s.CKs = drIkm2.slice(32, 64);
 
   const oldDHsSk = s.DHs.sk;
+  const oldKEMsSk = s.KEMs?.sk;
   s.DHs = { sk: nkp.secretKey, pk: nkp.publicKey };
+  s.KEMs = { sk: nkem.secretKey, pk: nkem.publicKey };
+  s.pendingKemCt = kemRes.cipherText;
+
   oldDHsSk.fill(0);
+  oldKEMsSk?.fill(0);
   oldRK2.fill(0);
   drIkm2.fill(0);
 }
@@ -448,7 +506,8 @@ export async function EncryptMessage(session: Session, plaintextStr: string) {
   if (session.state !== 'ESTABLISHED')
     throw new Error('Channel constraint violation');
   if (!session.CKs) stepDH(session);
-  if (!session.CKs) throw new Error('Failed to derive sending chain key (CKs)');
+  if (!session.CKs || !session.pendingKemCt || !session.KEMs)
+    throw new Error('Failed to derive sending chain key (CKs)');
 
   const sendingCK = session.CKs;
   const MK = hmacSHA256(sendingCK, new Uint8Array([0x01]));
@@ -468,7 +527,13 @@ export async function EncryptMessage(session: Session, plaintextStr: string) {
   dv.setUint32(0, session.PN);
   dv.setUint32(4, session.Ns);
 
-  const msgHdr = concatBytes(cIdBytes, session.DHs.pk, headerVals);
+  const msgHdr = concatBytes(
+    cIdBytes,
+    session.DHs.pk,
+    session.pendingKemCt,
+    session.KEMs.pk,
+    headerVals,
+  );
   const aad = concatBytes(
     new TextEncoder().encode('ECP-MSG-v1'),
     cIdBytes,
@@ -505,7 +570,7 @@ export async function EncryptMessage(session: Session, plaintextStr: string) {
 }
 
 export async function DecryptMessage(packetBytes: Uint8Array) {
-  if (packetBytes.length < 84) throw new Error('MSG packet truncated');
+  if (packetBytes.length < 3220) throw new Error('MSG packet truncated');
 
   const { type } = parseHeader(packetBytes);
   if (type !== Config.PACKET_TYPES.MSG)
@@ -514,6 +579,9 @@ export async function DecryptMessage(packetBytes: Uint8Array) {
   let offset = 12;
   const cIdBytes = packetBytes.slice(offset, (offset += 16));
   const dhPubBytes = packetBytes.slice(offset, (offset += 32));
+  const kemCt = packetBytes.slice(offset, (offset += 1568));
+  const kemPubBytes = packetBytes.slice(offset, (offset += 1568));
+
   const dv = new DataView(
     packetBytes.buffer,
     packetBytes.byteOffset,
@@ -537,7 +605,7 @@ export async function DecryptMessage(packetBytes: Uint8Array) {
     cIdBytes,
     decodeBase64URL(session.peerIdentity),
     serializeIdentityPublic(await getLocalIdentity()),
-    packetBytes.slice(12, 12 + 56),
+    packetBytes.slice(12, 12 + 3192),
   );
 
   session.skippedKeys ??= {};
@@ -590,7 +658,7 @@ export async function DecryptMessage(packetBytes: Uint8Array) {
     session.PN = session.Ns;
     session.Ns = 0;
     session.Nr = 0;
-    stepDH(session, dhPubBytes);
+    stepDH(session, dhPubBytes, kemCt, kemPubBytes);
   }
 
   if (n < session.Nr) throw new Error('Message frame out of order or replayed');
@@ -639,6 +707,10 @@ export async function DecryptMessage(packetBytes: Uint8Array) {
   session.CKr = CK_next;
   session.Nr++;
   oldCKr.fill(0);
+
+  const ks = Object.keys(session.skippedKeys);
+  if (ks.length > 100)
+    for (const k of ks.slice(0, ks.length - 100)) delete session.skippedKeys[k];
 
   delete session.lastRespPacket;
   await DB.put('sessions', session);

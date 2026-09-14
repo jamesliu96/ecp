@@ -300,6 +300,9 @@
   .my-2 {
     margin-block: calc(var(--spacing) * 2);
   }
+  .my-auto {
+    margin-block: auto;
+  }
   .mt-0\.5 {
     margin-top: calc(var(--spacing) * 0.5);
   }
@@ -806,6 +809,9 @@
   }
   .py-3 {
     padding-block: calc(var(--spacing) * 3);
+  }
+  .py-12 {
+    padding-block: calc(var(--spacing) * 12);
   }
   .pt-\[max\(0\.75rem\,env\(safe-area-inset-top\)\)\] {
     padding-top: max(0.75rem, env(safe-area-inset-top));
