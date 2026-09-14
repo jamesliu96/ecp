@@ -20,7 +20,6 @@ import {
   ProcessResp,
   DecryptMessage,
 } from './ratchet.js';
-import type { Message } from './types.js';
 
 const State = {
   currentContactFp: undefined as string | undefined,
