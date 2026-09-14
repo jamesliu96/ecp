@@ -1,5 +1,41 @@
 @import 'tailwindcss';
 
+@theme {
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  --animate-fadeIn: fadeIn 0.2s ease-in-out;
+}
+
 :root {
   @apply h-full bg-slate-950;
+}
+
+body {
+  @apply flex h-dvh w-screen flex-col overflow-hidden bg-slate-950 text-slate-200 select-none sm:select-auto;
+}
+
+::-webkit-scrollbar {
+  @apply w-1.5;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply rounded bg-slate-600;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-500;
+}
+
+.view-transition {
+  @apply animate-fadeIn;
 }

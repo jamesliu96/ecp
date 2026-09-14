@@ -336,7 +336,9 @@ async function renderChatLog() {
   ctn.replaceChildren(frag);
   const lastMsg = chatMsgs.length ? chatMsgs[chatMsgs.length - 1] : undefined;
   if (isNearBottom || lastMsg?.isMe)
-    requestAnimationFrame(() => (ctn.scrollTop = ctn.scrollHeight));
+    requestAnimationFrame(() => {
+      ctn.scrollTo({ top: ctn.scrollHeight, behavior: 'smooth' });
+    });
 }
 
 UI.$('#btn-attach').onclick = () => UI.$('#media-input').click();
