@@ -458,8 +458,7 @@ UI.$<HTMLFormElement>('#chat-form').onsubmit = (e) => {
 };
 
 UI.$('#btn-back-mobile').onclick = () => {
-  resetChatView(true);
-  renderSidebar();
+  history.back();
 };
 
 UI.$('#btn-copy-identity').onclick = async () => {
@@ -540,7 +539,11 @@ UI.$('#btn-peer-menu').onclick = () =>
   UI.$('#peer-dropdown').classList.toggle('hidden');
 
 document.addEventListener('click', (e) => {
-  if (!UI.$('#btn-peer-menu').contains(e.target as Node)) closePeerDropdown();
+  if (
+    !UI.$('#btn-peer-menu').contains(e.target as Node) &&
+    !UI.$('#peer-dropdown').contains(e.target as Node)
+  )
+    closePeerDropdown();
 });
 
 UI.$('#btn-search-toggle').onclick = () => {
@@ -757,10 +760,15 @@ async function processClipboardText(rawText: string) {
             text: plaintext,
             timestamp: Date.now(),
           });
+          if (State.currentContactFp === session.contactFp) {
+            const contact = await DB.get('contacts', session.contactFp);
+            if (contact) {
+              contact.lastReadTimestamp = Date.now();
+              await DB.put('contacts', contact);
+            }
+          }
           UI.showToast('Handshake INIT Processed');
           await handleOutgoing(encodeBase64URL(respPacket));
-          if (State.currentContactFp !== session.contactFp)
-            await selectContact(session.contactFp);
           sessionChanged = true;
         } else if (type === Config.PACKET_TYPES.RESP) {
           const { alreadyEstablished, session } = await ProcessResp(pktBytes);
@@ -770,8 +778,6 @@ async function processClipboardText(rawText: string) {
             UI.showToast('Channel Established');
             sessionChanged = true;
           }
-          if (State.currentContactFp !== session.contactFp)
-            await selectContact(session.contactFp);
         } else if (type === Config.PACKET_TYPES.MSG) {
           const { session, plaintext } = await DecryptMessage(pktBytes);
           await DB.put('messages', {
@@ -781,6 +787,13 @@ async function processClipboardText(rawText: string) {
             text: plaintext,
             timestamp: Date.now(),
           });
+          if (State.currentContactFp === session.contactFp) {
+            const contact = await DB.get('contacts', session.contactFp);
+            if (contact) {
+              contact.lastReadTimestamp = Date.now();
+              await DB.put('contacts', contact);
+            }
+          }
           UI.showToast('Message Decrypted');
           sessionChanged = true;
         }
