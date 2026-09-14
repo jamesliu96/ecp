@@ -41,7 +41,6 @@ const UI = {
 UI.$('#modal-overlay').onclick = () => {
     UI.closeModal();
 };
-const nextTick = 'requestIdleCallback' in globalThis ? requestIdleCallback : setTimeout;
 const closePeerDropdown = () => UI.$('#peer-dropdown').classList.add('hidden');
 function resetChatView(updateHash = true) {
     delete State.currentContactFp;
@@ -397,7 +396,7 @@ UI.$('#btn-add-contact').onclick = async () => {
         <button id="btn-confirm-add" class="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg min-h-11 cursor-pointer transition-colors shadow-sm">Save Peer</button>
       </div>
     `);
-        nextTick(() => {
+        requestAnimationFrame(() => {
             const input = UI.$('#new-alias-input');
             if (input) {
                 input.focus();
@@ -478,7 +477,7 @@ UI.$('#btn-rename-contact').onclick = async () => {
       <button id="btn-save" class="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg min-h-11 cursor-pointer transition-colors shadow-sm">Save</button>
     </div>
   `);
-    nextTick(() => {
+    requestAnimationFrame(() => {
         const input = UI.$('#rename-val');
         if (input) {
             input.value = contact.name;

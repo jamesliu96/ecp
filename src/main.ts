@@ -60,9 +60,6 @@ UI.$('#modal-overlay').onclick = () => {
   UI.closeModal();
 };
 
-const nextTick =
-  'requestIdleCallback' in globalThis ? requestIdleCallback : setTimeout;
-
 const closePeerDropdown = () => UI.$('#peer-dropdown').classList.add('hidden');
 
 function resetChatView(updateHash = true) {
@@ -484,7 +481,7 @@ UI.$('#btn-add-contact').onclick = async () => {
       </div>
     `);
 
-    nextTick(() => {
+    requestAnimationFrame(() => {
       const input = UI.$<HTMLInputElement>('#new-alias-input');
       if (input) {
         input.focus();
@@ -568,7 +565,7 @@ UI.$('#btn-rename-contact').onclick = async () => {
     </div>
   `);
 
-  nextTick(() => {
+  requestAnimationFrame(() => {
     const input = UI.$<HTMLInputElement>('#rename-val');
     if (input) {
       input.value = contact.name;
