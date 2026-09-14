@@ -121,7 +121,7 @@ Carries active Double Ratchet session payloads.
 | `64` – `67`     | Message Sequence ($N_s$)     | `UInt32BE`  | Message count index in current chain                    |
 | `68`+           | Payload Ciphertext           | Variable    | AES-256-GCM message body and 16-byte authentication tag |
 
-## Ratchet State Machine & Error Handling
+### Ratchet State Machine & Error Handling
 
 To maintain synchronization and prevent abuse, ECP dictates specific constraints on `MSG` frame validation.
 
@@ -129,21 +129,21 @@ To maintain synchronization and prevent abuse, ECP dictates specific constraints
 - **Gap Limitation & Skipped Keys:** ECP handles dropped packets by advancing the receiving chain up to the target sequence $N$. To prevent CPU exhaustion or memory starvation attacks via continuous HMAC chaining, ECP enforces a strict limit: if $N - N_r > 2000$, it throws an `"Excessive message gap"` exception.
 - **Ephemeral Zeroization:** During skipped frame advancement ($N_r < N$), intermediate receiving chain keys ($CK_r$) are wiped from RAM using `.fill(0)` immediately after generating the next step.
 
-### Cryptographic Derivations & Formulas
+#### Cryptographic Derivations & Formulas
 
-#### Hybrid Master Key Encapsulation (INIT Phase)
+##### Hybrid Master Key Encapsulation (INIT Phase)
 
 The initial Shared Key ($SK$) combines classical ECDH key agreement with post-quantum key encapsulation using HKDF-SHA256:
 
 $$SK = \text{HKDF-SHA256}\left(\mathtt{"ECP-INIT-v1"} \parallel DH_1 \parallel KEM_{SS}\right)$$
 
-#### Composite Initialization Signature
+##### Composite Initialization Signature
 
 Handshake integrity and authenticity are asserted by signing the concatenated parameter block using the sender's composite Ed25519 + ML-DSA-87 private keys:
 
 $$Sig = \text{Sign}_{\text{Ed25519+ML-DSA-87}}\left(\mathtt{"ECP-INIT-v1"} \parallel SenderID \parallel ReceiverID \parallel Ek_{pk} \parallel KEM_{CT}\right)$$
 
-#### Symmetric Double Ratchet Chains
+##### Symmetric Double Ratchet Chains
 
 Chain Keys ($CK$) and Message Keys ($MK$) advance via HMAC-SHA256 step derivation:
 
