@@ -13,7 +13,7 @@ export const getRandomValues = <
 ): T => {
   const MAX_SIZE = 65536;
   if (array.length <= MAX_SIZE) return crypto.getRandomValues(array);
-  for (let offset = 0; offset < array.length; )
+  for (let offset = 0; offset < array.length;)
     crypto.getRandomValues(array.subarray(offset, (offset += MAX_SIZE)));
   return array;
 };

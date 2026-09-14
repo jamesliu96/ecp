@@ -25,6 +25,8 @@
     "@tailwindcss/cli": "4",
     "npm-check-updates": "23",
     "npm-run-all": "4",
+    "prettier": "3",
+    "prettier-plugin-tailwindcss": "0",
     "serve": "14",
     "typescript": "7"
   },

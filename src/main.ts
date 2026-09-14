@@ -308,31 +308,27 @@ async function renderChatLog() {
       aud.className = 'max-w-full my-1';
       div.appendChild(aud);
     } else if (query) {
+      const span = document.createElement('span');
+      div.appendChild(span);
       const regex = new RegExp(
         `(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`,
         'gi',
       );
-      const parts = m.text.split(regex);
-      for (const part of parts) {
+      for (const part of m.text.split(regex))
         if (part.toLowerCase() === query) {
-          const span = document.createElement('span');
-          span.className = 'highlight-match';
-          span.textContent = part;
-          div.appendChild(span);
-        } else {
-          div.appendChild(document.createTextNode(part));
-        }
-      }
+          const partSpan = document.createElement('span');
+          partSpan.className =
+            'bg-amber-500/30 text-white rounded px-0.5 font-semibold';
+          partSpan.textContent = part;
+          span.appendChild(partSpan);
+        } else span.appendChild(document.createTextNode(part));
     } else div.textContent = m.text;
 
     const timeSpan = document.createElement('div');
     timeSpan.className = `text-[10px] mt-1.5 select-none flex justify-end ${
       m.isMe ? 'text-indigo-200/80' : 'text-slate-400'
     }`;
-    timeSpan.textContent = new Date(m.timestamp).toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    timeSpan.textContent = new Date(m.timestamp).toLocaleString();
     div.appendChild(timeSpan);
 
     frag.appendChild(div);
