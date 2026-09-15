@@ -1,17 +1,15 @@
-import { buildHeader, parseHeader } from './codec.js';
+import { buildHeader, parseHeader, encodeUTF8, decodeUTF8 } from './codec.js';
 import { Config } from './config.js';
 import { encodeBase64URL, decodeBase64URL, concatBytes, sha256, hkdfSHA256, hmacSHA256, encryptGCM, decryptGCM, encapsulateMLKEM1024, decapsulateMLKEM1024, keygenX25519, getSharedSecretX25519, keygenMLKEM1024, signComposite, verifyComposite, constantTimeCompare, } from './crypto.js';
 import { getLocalFingerprint, getLocalIdentity, serializeIdentityPublic, parseIdentityPublic, calculateFingerprint, } from './identity.js';
 import { DB } from './storage.js';
-const utf8 = (s) => new TextEncoder().encode(s);
-const ZEROS = new Uint8Array(32);
 const deriveSymmetric = (mk, keyLabel, nonceLabel) => ({
-    key: hkdfSHA256(mk, ZEROS, utf8(keyLabel), 32),
-    nonce: hmacSHA256(mk, utf8(nonceLabel)).slice(0, 12),
+    key: hkdfSHA256(mk, new Uint8Array(32), encodeUTF8(keyLabel), 32),
+    nonce: hmacSHA256(mk, encodeUTF8(nonceLabel)).slice(0, 12),
 });
-const kdfRoot = (rk, dh, kem) => hkdfSHA256(concatBytes(dh, kem), rk, utf8('ECP-DR-RK-v1'), 64);
+const kdfRoot = (rk, dh, kem) => hkdfSHA256(concatBytes(dh, kem), rk, encodeUTF8('ECP-DR-RK-v1'), 64);
 const deriveInitKeys = (sk) => {
-    const mk = hkdfSHA256(sk, ZEROS, utf8('ECP-INIT-MESSAGE-v1'), 32);
+    const mk = hkdfSHA256(sk, new Uint8Array(32), encodeUTF8('ECP-INIT-MESSAGE-v1'), 32);
     return deriveSymmetric(mk, 'ECP-AES256GCM-v1', 'ECP-INIT-NONCE');
 };
 const deriveMsgKeys = (ck) => {
@@ -37,17 +35,17 @@ export async function CreateInit(contactFp, plaintextStr) {
     const ekKP = keygenX25519();
     const kemRes = encapsulateMLKEM1024(peerId.kemPk);
     const dh1 = getSharedSecretX25519(ekKP.secretKey, peerId.dhPk);
-    const SK = hkdfSHA256(concatBytes(utf8('ECP-INIT-v1'), dh1, kemRes.sharedSecret), ZEROS, utf8(''), 32);
-    const sigInput = concatBytes(utf8('ECP-INIT-v1'), localPubBytes, peerPubBytes, ekKP.publicKey, kemRes.cipherText);
+    const SK = hkdfSHA256(concatBytes(encodeUTF8('ECP-INIT-v1'), dh1, kemRes.sharedSecret), new Uint8Array(32), encodeUTF8(''), 32);
+    const sigInput = concatBytes(encodeUTF8('ECP-INIT-v1'), localPubBytes, peerPubBytes, ekKP.publicKey, kemRes.cipherText);
     const sig = signComposite(sigInput, local.ecSk, local.dsaSk);
     const initCrypto = deriveInitKeys(SK);
     const payloadFixed = concatBytes(localPubBytes, peerPubBytes, ekKP.publicKey, kemRes.cipherText, sig);
-    const ptextEnc = utf8(plaintextStr);
+    const ptextEnc = encodeUTF8(plaintextStr);
     const header = buildHeader(Config.PACKET_TYPES.INIT, payloadFixed.length + ptextEnc.length + 16);
     const aad = concatBytes(header, payloadFixed);
     const ciphertext = encryptGCM(initCrypto.key, initCrypto.nonce, ptextEnc, aad);
     const fullPacket = concatBytes(header, payloadFixed, ciphertext);
-    const convIdHash = sha256(concatBytes(utf8('ECP-CONVERSATION-v1'), ekKP.publicKey, kemRes.cipherText));
+    const convIdHash = sha256(concatBytes(encodeUTF8('ECP-CONVERSATION-v1'), ekKP.publicKey, kemRes.cipherText));
     const session = {
         contactFp,
         version: 1,
@@ -56,7 +54,7 @@ export async function CreateInit(contactFp, plaintextStr) {
         DHs: { sk: ekKP.secretKey, pk: ekKP.publicKey },
         KEMs: { sk: local.kemSk, pk: local.kemPk },
         KEMr: { pk: peerId.kemPk },
-        RK: hkdfSHA256(SK, ZEROS, utf8('ECP-DR-ROOT-v1'), 32),
+        RK: hkdfSHA256(SK, new Uint8Array(32), encodeUTF8('ECP-DR-ROOT-v1'), 32),
         Ns: 0,
         Nr: 0,
         PN: 0,
@@ -90,7 +88,7 @@ export async function ProcessInit(packetBytes) {
     if (existingSession?.usedInitEks?.includes(sigHash))
         throw new Error('INIT packet replay detected.');
     const senderId = parseIdentityPublic(sIdBytes);
-    const sigInput = concatBytes(utf8('ECP-INIT-v1'), sIdBytes, rIdBytes, ekPubBytes, kemCt);
+    const sigInput = concatBytes(encodeUTF8('ECP-INIT-v1'), sIdBytes, rIdBytes, ekPubBytes, kemCt);
     if (!verifyComposite(sig, sigInput, senderId.ecPk, senderId.dsaPk))
         throw new Error('INIT packet signature verification failed.');
     let contact = await DB.get('contacts', senderFp);
@@ -107,16 +105,16 @@ export async function ProcessInit(packetBytes) {
     }
     const dh1 = getSharedSecretX25519(local.dhSk, ekPubBytes);
     const kemSS = decapsulateMLKEM1024(kemCt, local.kemSk);
-    const SK = hkdfSHA256(concatBytes(utf8('ECP-INIT-v1'), dh1, kemSS), ZEROS, utf8(''), 32);
+    const SK = hkdfSHA256(concatBytes(encodeUTF8('ECP-INIT-v1'), dh1, kemSS), new Uint8Array(32), encodeUTF8(''), 32);
     const initCrypto = deriveInitKeys(SK);
     const ptextBytes = decryptGCM(initCrypto.key, initCrypto.nonce, ciphertext, concatBytes(headerBytes, packetBytes.slice(12, 12 + fixedPayloadLen)));
-    const RK0 = hkdfSHA256(SK, ZEROS, utf8('ECP-DR-ROOT-v1'), 32);
+    const RK0 = hkdfSHA256(SK, new Uint8Array(32), encodeUTF8('ECP-DR-ROOT-v1'), 32);
     const dhsKP = keygenX25519();
     const nkemKP = keygenMLKEM1024();
     const dh2 = getSharedSecretX25519(dhsKP.secretKey, ekPubBytes);
     const kemRes2 = encapsulateMLKEM1024(senderId.kemPk);
     const drIkm = kdfRoot(RK0, dh2, kemRes2.sharedSecret);
-    const convIdHash = sha256(concatBytes(utf8('ECP-CONVERSATION-v1'), ekPubBytes, kemCt));
+    const convIdHash = sha256(concatBytes(encodeUTF8('ECP-CONVERSATION-v1'), ekPubBytes, kemCt));
     const respCrypto = deriveSymmetric(SK, 'ECP-RESP-v1', 'ECP-RESP-NONCE-v1');
     const respPayload = concatBytes(dhsKP.publicKey, kemRes2.cipherText, nkemKP.publicKey);
     const respHdr = buildHeader(Config.PACKET_TYPES.RESP, respPayload.length + 16);
@@ -144,7 +142,7 @@ export async function ProcessInit(packetBytes) {
     await DB.put('sessions', session);
     return {
         session,
-        plaintext: new TextDecoder().decode(ptextBytes),
+        plaintext: decodeUTF8(ptextBytes),
         respPacket,
     };
 }
@@ -155,9 +153,7 @@ export async function ProcessResp(packetBytes) {
     if (type !== Config.PACKET_TYPES.RESP)
         throw new Error('Protocol type mismatch.');
     const sessions = await DB.getAll('sessions');
-    const candidateSessions = sessions
-        .filter((s) => s.state === 'HANDSHAKE_SENT' && s.SK)
-        .slice(-10);
+    const candidateSessions = sessions.filter((s) => s.state === 'HANDSHAKE_SENT' && s.SK);
     let targetSession;
     let respPlaintext;
     for (const session of candidateSessions) {
@@ -174,7 +170,7 @@ export async function ProcessResp(packetBytes) {
     if (!targetSession || !respPlaintext) {
         if (sessions.some((s) => s.state === 'ESTABLISHED'))
             return { alreadyEstablished: true, session: sessions[0] };
-        throw new Error('RESP packet processing failed.');
+        throw new Error('RESP packet processing failed: No matching handshake session found.');
     }
     const dhsPubBytes = respPlaintext.slice(0, 32);
     const kemCt = respPlaintext.slice(32, 1600);
@@ -223,8 +219,8 @@ export async function EncryptMessage(session, plaintextStr) {
     dv.setUint32(0, session.PN);
     dv.setUint32(4, session.Ns);
     const msgHdr = concatBytes(cIdBytes, session.DHs.pk, session.pendingKemCt, session.KEMs.pk, headerVals);
-    const aad = concatBytes(utf8('ECP-MSG-v1'), cIdBytes, lPubBytes, decodeBase64URL(session.peerIdentity), msgHdr);
-    const ct = encryptGCM(key, nonce, utf8(plaintextStr), aad);
+    const aad = concatBytes(encodeUTF8('ECP-MSG-v1'), cIdBytes, lPubBytes, decodeBase64URL(session.peerIdentity), msgHdr);
+    const ct = encryptGCM(key, nonce, encodeUTF8(plaintextStr), aad);
     const payload = concatBytes(msgHdr, ct);
     session.CKs = nextCk;
     session.Ns++;
@@ -233,7 +229,7 @@ export async function EncryptMessage(session, plaintextStr) {
 }
 export async function DecryptMessage(packetBytes) {
     if (packetBytes.length < 3220)
-        throw new Error('Invalid message packet.');
+        throw new Error('Invalid message packet length.');
     const { type } = parseHeader(packetBytes);
     if (type !== Config.PACKET_TYPES.MSG)
         throw new Error('Invalid message packet type.');
@@ -248,9 +244,11 @@ export async function DecryptMessage(packetBytes) {
     const n = dv.getUint32(offset);
     offset += 4;
     const session = await DB.getByIndex('sessions', 'conversationId', encodeBase64URL(cIdBytes));
-    if (!session || !session.DHr)
-        throw new Error('Message decryption failed.');
-    const aad = concatBytes(utf8('ECP-MSG-v1'), cIdBytes, decodeBase64URL(session.peerIdentity), serializeIdentityPublic(await getLocalIdentity()), packetBytes.slice(12, 12 + 3192));
+    if (!session)
+        throw new Error('Session not found for the provided Conversation ID.');
+    if (!session.DHr)
+        throw new Error('Session missing remote DH keys.');
+    const aad = concatBytes(encodeUTF8('ECP-MSG-v1'), cIdBytes, decodeBase64URL(session.peerIdentity), serializeIdentityPublic(await getLocalIdentity()), packetBytes.slice(12, 12 + 3192));
     session.skippedKeys ??= {};
     const dhKeyTag = encodeBase64URL(dhPubBytes);
     const cacheKey = `${dhKeyTag}_${n}`;
@@ -260,10 +258,10 @@ export async function DecryptMessage(packetBytes) {
             const ptext = decryptGCM(key, nonce, packetBytes.slice(offset), aad);
             delete session.skippedKeys[cacheKey];
             await DB.put('sessions', session);
-            return { session, plaintext: new TextDecoder().decode(ptext) };
+            return { session, plaintext: decodeUTF8(ptext) };
         }
         catch {
-            throw new Error('Message decryption failed.');
+            throw new Error('Message decryption failed: AEAD tag mismatch on skipped key.');
         }
     }
     let tempCKr = session.CKr;
@@ -286,7 +284,7 @@ export async function DecryptMessage(packetBytes) {
         tempNs = 0;
         tempNr = 0;
         if (!stage.KEMs)
-            throw new Error('Message decryption failed.');
+            throw new Error('Missing local KEM keys during ratchet step.');
         const dh1 = getSharedSecretX25519(stage.DHs.sk, dhPubBytes);
         const kemSS = decapsulateMLKEM1024(kemCt, stage.KEMs.sk);
         const drIkm1 = kdfRoot(tempRK, dh1, kemSS);
@@ -305,25 +303,27 @@ export async function DecryptMessage(packetBytes) {
         stage.KEMs = { sk: nkem.secretKey, pk: nkem.publicKey };
         stage.pendingKemCt = kemRes.cipherText;
     }
-    if (n < tempNr || n - tempNr > 2000)
-        throw new Error('Message decryption failed.');
+    if (n < tempNr)
+        throw new Error('Message frame out of order or replayed.');
+    if (n - tempNr > 2000)
+        throw new Error('Excessive message gap.');
     while (tempNr < n) {
         if (!tempCKr)
-            throw new Error('Message decryption failed.');
+            throw new Error('Missing receiving chain (CKr) during key skipping.');
         const { mk, nextCk } = deriveMsgKeys(tempCKr);
         newSkippedKeys[`${dhKeyTag}_${tempNr}`] = encodeBase64URL(mk);
         tempCKr = nextCk;
         tempNr++;
     }
     if (!tempCKr)
-        throw new Error('Message decryption failed.');
+        throw new Error('Missing receiving chain (CKr) for final decryption.');
     const { key, nonce, nextCk } = deriveMsgKeys(tempCKr);
     let ptext;
     try {
         ptext = decryptGCM(key, nonce, packetBytes.slice(offset), aad);
     }
     catch {
-        throw new Error('Message decryption failed.');
+        throw new Error('Message decryption failed: AEAD tag mismatch.');
     }
     session.CKr = nextCk;
     if (stepped)
@@ -338,6 +338,6 @@ export async function DecryptMessage(packetBytes) {
             delete session.skippedKeys[k];
     delete session.lastRespPacket;
     await DB.put('sessions', session);
-    return { session, plaintext: new TextDecoder().decode(ptext) };
+    return { session, plaintext: decodeUTF8(ptext) };
 }
 //# sourceMappingURL=ratchet.js.map

@@ -29,4 +29,6 @@ export const parseEnvelope = (str) => {
         throw new Error('Invalid ECP envelope format.');
     return decodeBase64URL(trimmed.substring(Config.PREFIX.length).trim());
 };
+export const encodeUTF8 = (v) => new TextEncoder().encode(v);
+export const decodeUTF8 = (v) => new TextDecoder().decode(v);
 //# sourceMappingURL=codec.js.map

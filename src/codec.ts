@@ -13,7 +13,8 @@ export const buildHeader = (type: number, payloadLength: number) => {
 export const parseHeader = (bytes: Uint8Array) => {
   if (bytes.length < 12) throw new Error('Invalid packet length.');
   for (let i = 0; i < 4; i++)
-    if (bytes[i] !== Config.PACKET_MAGIC[i]) throw new Error('Packet magic byte mismatch.');
+    if (bytes[i] !== Config.PACKET_MAGIC[i])
+      throw new Error('Packet magic byte mismatch.');
   if (bytes[4] !== Config.WIRE_PROTOCOL_VERSION)
     throw new Error('Unsupported wire protocol version.');
   return {
@@ -36,3 +37,6 @@ export const parseEnvelope = (str: string) => {
     throw new Error('Invalid ECP envelope format.');
   return decodeBase64URL(trimmed.substring(Config.PREFIX.length).trim());
 };
+
+export const encodeUTF8 = (v: string) => new TextEncoder().encode(v);
+export const decodeUTF8 = (v: Uint8Array) => new TextDecoder().decode(v);

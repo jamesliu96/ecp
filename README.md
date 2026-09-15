@@ -19,7 +19,7 @@ A serverless, pure-frontend web implementation of the End-to-End Encrypted Clipb
 ### Out-of-Scope Risks
 
 - **Host Environment Integrity:** Malware, malicious browser extensions, or OS-level keyloggers/clipboard monitors running on the user's host machine.
-- **Side-Channel Attacks:** Execution timing or memory access side-channels native to the JavaScript engine runtime environment.
+- **Side-Channel Probing:** Execution timing or memory access side-channels native to the JavaScript engine runtime environment.
 
 ## Usage Lifecycle
 
@@ -135,10 +135,11 @@ To bind ciphertexts to their exact wire headers and identities, AEAD operations 
 
 ### Ratchet State Machine & Error Handling
 
-To maintain synchronization and prevent abuse, ECP dictates specific constraints on `MSG` frame validation:
+To maintain synchronization and assist offline user debugging, ECP dictates explicit frame validation and diagnostic exceptions:
 
-- **Sequence Progression & Replay Drop:** The protocol demands strict forward progression. During `DecryptMessage`, the parsed sequence number ($N$) is compared against the expected receive sequence ($N_r$). If $N < N_r$, the message is dropped immediately, throwing a `"Message frame out of order or replayed"` error.
-- **Gap Limitation & Skipped Keys:** ECP handles dropped packets by advancing the receiving chain up to the target sequence $N$. To prevent CPU exhaustion or memory starvation attacks via continuous HMAC chaining, ECP enforces a strict limit: if $N - N_r > 2000$, it throws an `"Excessive message gap"` exception.
+- **Sequence Progression & Replay Drop:** The protocol demands strict forward progression. During `DecryptMessage`, the parsed sequence number ($N$) is compared against the expected receive sequence ($N_r$). If $N < N_r$, the message is dropped, throwing `"Message frame out of order or replayed"`.
+- **Gap Limitation & Skipped Keys:** ECP handles dropped packets by advancing the receiving chain up to the target sequence $N$. To prevent infinite loops during HMAC chaining, ECP enforces a strict limit: if $N - N_r > 2000$, it throws an `"Excessive message gap"` exception.
+- **Diagnostic Cryptographic Failures:** If AEAD tag authentication fails, or if required keys are missing, the protocol throws explicit, localized exceptions (such as `"Message decryption failed: AEAD tag mismatch"`) to optimize offline client troubleshooting.
 
 ### Cryptographic Derivations & Formulas
 
