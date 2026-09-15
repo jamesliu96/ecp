@@ -30,7 +30,7 @@ const State = {
 const UI = {
   $: <T extends HTMLElement>(s: string) => {
     const el = document.querySelector(s);
-    if (!el) throw new Error(`Element ${s} not found in DOM`);
+    if (!el) throw new Error(`Required DOM element not found: ${s}`);
     return el as T;
   },
   toastTimer: undefined as number | undefined,
@@ -265,7 +265,7 @@ async function renderChatLog(isInitialView = false) {
         UI.$<HTMLButtonElement>('#btn-attach').disabled =
           session.state === 'HANDSHAKE_SENT';
     } else {
-      UI.$('#chat-status-text').textContent = 'Channel Established';
+      UI.$('#chat-status-text').textContent = 'Channel established.';
       UI.$('#chat-status-dot').className =
         'w-2 h-2 rounded-full bg-emerald-400';
       UI.$<HTMLInputElement>('#chat-input').disabled =
@@ -427,8 +427,9 @@ const submitChatMessage = async () => {
     }
     input.value = '';
   } catch (err) {
-    const msg = err instanceof Error && err.message ? err.message : String(err);
-    UI.showToast(`Crypto Error: ${msg}`);
+    UI.showToast(
+      `Crypto Error: ${err instanceof Error && err.message ? err.message : String(err)}`,
+    );
     console.error('[Crypto] Outgoing processing error:', err);
   } finally {
     isSending = false;
@@ -495,9 +496,9 @@ UI.$('#btn-add-contact').onclick = async () => {
     const bytes = parseEnvelope(text);
     const fp = calculateFingerprint(bytes);
     const localFp = await getLocalFingerprint();
-    if (fp === localFp) return UI.showToast('Cannot Link Own Identity');
+    if (fp === localFp) return UI.showToast('Cannot link own identity.');
     if (await DB.get('contacts', fp))
-      return UI.showToast('Peer Already Exists');
+      return UI.showToast('Peer already exists.');
 
     UI.showModal(`
       <div class="p-4 bg-slate-900 border-b border-slate-800"><h3 class="font-bold text-slate-200">Link New Peer</h3></div>
@@ -535,15 +536,15 @@ UI.$('#btn-add-contact').onclick = async () => {
           lastReadTimestamp: Date.now(),
         });
         UI.closeModal();
-        UI.showToast('Peer Linked');
+        UI.showToast('Peer linked successfully.');
         await renderSidebar();
       } catch (err) {
-        UI.showToast('Failed to Save Peer');
+        UI.showToast('Failed to save peer.');
         console.error('[Storage] Save peer error:', err);
       }
     };
   } catch (err) {
-    UI.showToast('Invalid Identity in Clipboard');
+    UI.showToast('Invalid identity format in clipboard.');
     console.error('[Clipboard] Parse identity error:', err);
   }
 };
@@ -620,7 +621,7 @@ UI.$('#btn-rename-contact').onclick = async () => {
       UI.closeModal();
       await renderSidebar();
     } catch (err) {
-      UI.showToast('Failed to Save Alias');
+      UI.showToast('Failed to save alias.');
       console.error('[Storage] Rename contact error:', err);
     }
   };
@@ -637,10 +638,10 @@ UI.$('#btn-archive-contact').onclick = async () => {
       ? 'Restore Peer'
       : 'Archive Peer';
     await DB.put('contacts', contact);
-    UI.showToast(contact.archived ? 'Peer Archived' : 'Peer Restored');
+    UI.showToast(contact.archived ? 'Peer archived.' : 'Peer restored.');
     await renderSidebar();
   } catch (err) {
-    UI.showToast('Failed to Update Peer');
+    UI.showToast('Failed to update peer.');
     console.error('[Storage] Archive contact error:', err);
   }
 };
@@ -672,10 +673,10 @@ UI.$('#btn-delete-contact').onclick = async () => {
       if (session) await DB.deleteConversation(session.conversationId);
       UI.closeModal();
       resetChatView(true);
-      UI.showToast('Peer Deleted');
+      UI.showToast('Peer deleted.');
       await renderSidebar();
     } catch (err) {
-      UI.showToast('Failed to Delete Peer');
+      UI.showToast('Failed to delete peer.');
       console.error('[Storage] Delete contact error:', err);
     }
   };
@@ -703,9 +704,9 @@ UI.$('#btn-reset-session').onclick = async () => {
       await DB.deleteConversation(session.conversationId);
       UI.closeModal();
       await renderChatLog();
-      UI.showToast('Channel State Wiped');
+      UI.showToast('Channel state wiped.');
     } catch (err) {
-      UI.showToast('Failed to Wipe Channel');
+      UI.showToast('Failed to wipe channel.');
       console.error('[Storage] Wipe session error:', err);
     }
   };
@@ -731,9 +732,9 @@ UI.$('#btn-global-settings').onclick = () => {
         persistHandshakes: UI.$<HTMLInputElement>('#cfg-persist').checked,
       });
       UI.closeModal();
-      UI.showToast('Settings Saved');
+      UI.showToast('Settings saved successfully.');
     } catch (err) {
-      UI.showToast('Failed to Save Settings');
+      UI.showToast('Failed to save settings.');
       console.warn('[Storage] Failed to save settings:', err);
     }
   };
@@ -742,30 +743,32 @@ UI.$('#btn-global-settings').onclick = () => {
 async function processClipboardText(rawText: string) {
   const text = rawText.trim();
   if (!text.startsWith(Config.PREFIX))
-    return UI.showToast('Invalid Envelope Format');
+    return UI.showToast('Invalid ECP envelope format.');
   if (text.length > Config.MAX_PACKET_SIZE)
-    return UI.showToast('Packet Exceeds Size Limit');
+    return UI.showToast('Packet exceeds maximum size limits.');
 
   try {
     const bytes = parseEnvelope(text);
     if (bytes[0] === Config.IDENTITY_VERSION && bytes.length > 1000)
-      return UI.showToast("Identity Bundle Detected (Use 'Link New Peer')");
+      return UI.showToast(
+        "Identity bundle detected. Please use 'Link New Peer'.",
+      );
 
     let offset = 0;
     let sessionChanged = false;
 
     while (offset < bytes.length) {
       if (bytes.length - offset < 12)
-        throw new Error('Truncated packet header');
+        throw new Error('Truncated packet header.');
       const { type, payloadLength } = parseHeader(
         bytes.slice(offset, offset + 12),
       );
       if (payloadLength > Config.MAX_PACKET_SIZE)
-        throw new Error('Payload size constraint violation');
+        throw new Error('Payload size constraint violation.');
 
       const pktLen = 12 + payloadLength;
       if (bytes.length - offset < pktLen)
-        throw new Error('Incomplete packet payload structure');
+        throw new Error('Incomplete packet payload structure.');
       const pktBytes = bytes.slice(offset, offset + pktLen);
 
       offset += pktLen;
@@ -788,7 +791,7 @@ async function processClipboardText(rawText: string) {
               await DB.put('contacts', contact);
             }
           }
-          UI.showToast('Handshake INIT Processed');
+          UI.showToast('Handshake INIT processed.');
           await handleOutgoing(encodeBase64URL(respPacket));
           sessionChanged = true;
         } else if (type === Config.PACKET_TYPES.RESP) {
@@ -796,7 +799,7 @@ async function processClipboardText(rawText: string) {
           if (alreadyEstablished)
             console.warn('[Ratchet] Skipping redundant RESP packet in bundle.');
           else {
-            UI.showToast('Channel Established');
+            UI.showToast('Channel established.');
             sessionChanged = true;
           }
         } else if (type === Config.PACKET_TYPES.MSG) {
@@ -815,7 +818,7 @@ async function processClipboardText(rawText: string) {
               await DB.put('contacts', contact);
             }
           }
-          UI.showToast('Message Decrypted');
+          UI.showToast('Message decrypted.');
           sessionChanged = true;
         }
       } catch (err) {
@@ -828,8 +831,9 @@ async function processClipboardText(rawText: string) {
       await renderSidebar();
     }
   } catch (err) {
-    const msg = err instanceof Error && err.message ? err.message : String(err);
-    UI.showToast(`Bundle Rejected: ${msg}`);
+    UI.showToast(
+      `Bundle Rejected: ${err instanceof Error && err.message ? err.message : String(err)}`,
+    );
     console.error('[Ratchet] Incoming bundle error:', err);
   }
 }
@@ -839,7 +843,7 @@ UI.$('#btn-read').onclick = UI.$('#btn-read-clipboard').onclick = async () => {
     const text = await navigator.clipboard.readText();
     await processClipboardText(text);
   } catch (err) {
-    UI.showToast('Failed to Read Clipboard');
+    UI.showToast('Failed to read clipboard.');
     console.error('[Clipboard] Read error:', err);
   }
 };
@@ -916,7 +920,7 @@ const initApp = async () => {
     await handleRoute();
     console.info('[App] Initialization complete.');
   } catch (err) {
-    UI.showToast('Initialization Failed');
+    UI.showToast('Application initialization failed.');
     console.error('[App] Boot failure:', err);
   }
 };

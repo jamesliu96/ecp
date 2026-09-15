@@ -46,9 +46,9 @@ export const serializeIdentityPublic = (id: Identity) =>
   );
 
 export const parseIdentityPublic = (bytes: Uint8Array) => {
-  if (bytes.length < 4225) throw new Error('Identity packet malformed');
+  if (bytes.length < 4225) throw new Error('Malformed identity packet.');
   if (bytes[0] !== Config.IDENTITY_VERSION)
-    throw new Error('Unsupported identity version');
+    throw new Error('Unsupported identity version.');
   return {
     ecPk: bytes.slice(1, 33),
     dsaPk: bytes.slice(33, 2625),

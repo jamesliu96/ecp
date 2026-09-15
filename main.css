@@ -64,7 +64,7 @@
     --default-transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
     --default-font-family: var(--font-sans);
     --default-mono-font-family: var(--font-mono);
-    --animate-fadeIn: fadeIn 0.2s ease-in-out;
+    --animate-fade-in: fade-in 0.2s ease-out;
   }
 }
 @layer base {
@@ -1181,7 +1181,7 @@ body {
   background-color: var(--color-slate-500);
 }
 .view-transition {
-  animation: var(--animate-fadeIn);
+  animation: var(--animate-fade-in);
 }
 @property --tw-translate-x {
   syntax: "*";
@@ -1423,7 +1423,7 @@ body {
     opacity: 0.5;
   }
 }
-@keyframes fadeIn {
+@keyframes fade-in {
   from {
     opacity: 0;
   }

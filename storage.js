@@ -7,9 +7,8 @@ export const Settings = (() => {
                 const stored = localStorage.getItem('ecp_settings');
                 return stored ? { ...DEFAULT, ...JSON.parse(stored) } : DEFAULT;
             }
-            catch {
-                return DEFAULT;
-            }
+            catch { }
+            return DEFAULT;
         },
         set: (settings) => {
             localStorage.setItem('ecp_settings', JSON.stringify(settings));

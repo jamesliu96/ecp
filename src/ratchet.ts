@@ -60,11 +60,11 @@ const deriveMsgKeys = (ck: Uint8Array) => {
 
 export async function CreateInit(contactFp: string, plaintextStr: string) {
   const localFp = await getLocalFingerprint();
-  if (contactFp === localFp) throw new Error('Self-messaging prohibited.');
+  if (contactFp === localFp) throw new Error('Self-messaging is prohibited.');
 
   const local = await getLocalIdentity();
   const contact = await DB.get('contacts', contactFp);
-  if (!contact) throw new Error('Peer context missing');
+  if (!contact) throw new Error('Peer context is missing.');
 
   const localPubBytes = serializeIdentityPublic(local);
   const peerPubBytes = decodeBase64URL(contact.bundle);
@@ -146,7 +146,7 @@ export async function ProcessInit(packetBytes: Uint8Array) {
   let offset = 12;
   const fixedPayloadLen = 4225 * 2 + 32 + 1568 + 4691;
   if (packetBytes.length < 12 + fixedPayloadLen + 16)
-    throw new Error('INIT structural integrity fail');
+    throw new Error('INIT packet structural integrity check failed.');
 
   const sIdBytes = packetBytes.slice(offset, (offset += 4225));
   const rIdBytes = packetBytes.slice(offset, (offset += 4225));
@@ -156,16 +156,16 @@ export async function ProcessInit(packetBytes: Uint8Array) {
   const ciphertext = packetBytes.slice(offset);
 
   if (!constantTimeCompare(rIdBytes, localPubBytes))
-    throw new Error('INIT dest misrouted');
+    throw new Error('INIT packet destination misrouted.');
 
   const senderFp = calculateFingerprint(sIdBytes);
   if (senderFp === (await getLocalFingerprint()))
-    throw new Error('Self-messaging prohibited.');
+    throw new Error('Self-messaging is prohibited.');
 
   const sigHash = encodeBase64URL(sha256(sig));
   const existingSession = await DB.get('sessions', senderFp);
   if (existingSession?.usedInitEks?.includes(sigHash))
-    throw new Error('INIT packet replay detected');
+    throw new Error('INIT packet replay detected.');
 
   const senderId = parseIdentityPublic(sIdBytes);
   const sigInput = concatBytes(
@@ -176,7 +176,7 @@ export async function ProcessInit(packetBytes: Uint8Array) {
     kemCt,
   );
   if (!verifyComposite(sig, sigInput, senderId.ecPk, senderId.dsaPk))
-    throw new Error('INIT signature rejected');
+    throw new Error('INIT packet signature verification failed.');
 
   let contact = await DB.get('contacts', senderFp);
   if (!contact) {
@@ -266,11 +266,11 @@ export async function ProcessInit(packetBytes: Uint8Array) {
 }
 
 export async function ProcessResp(packetBytes: Uint8Array) {
-  if (packetBytes.length < 3196) throw new Error('RESP packet truncated');
+  if (packetBytes.length < 3196) throw new Error('RESP packet is truncated.');
 
   const { type, headerBytes } = parseHeader(packetBytes);
   if (type !== Config.PACKET_TYPES.RESP)
-    throw new Error('Protocol type mismatch');
+    throw new Error('Protocol type mismatch.');
 
   const sessions = await DB.getAll('sessions');
   const candidateSessions = sessions
@@ -302,7 +302,7 @@ export async function ProcessResp(packetBytes: Uint8Array) {
   if (!targetSession || !respPlaintext) {
     if (sessions.some((s) => s.state === 'ESTABLISHED'))
       return { alreadyEstablished: true, session: sessions[0] };
-    throw new Error('Unmatched RESP authentication tag or state error');
+    throw new Error('RESP packet processing failed.');
   }
 
   const dhsPubBytes = respPlaintext.slice(0, 32);
@@ -329,7 +329,7 @@ export async function ProcessResp(packetBytes: Uint8Array) {
 }
 
 function stepDH(s: Session) {
-  if (!s.DHr || !s.KEMr) throw new Error('Cannot step DH: Remote keys missing');
+  if (!s.DHr || !s.KEMr) throw new Error('Cannot advance DH ratchet: remote keys are missing.');
 
   const nkp = keygenX25519();
   const nkem = keygenMLKEM1024();
@@ -347,10 +347,10 @@ function stepDH(s: Session) {
 
 export async function EncryptMessage(session: Session, plaintextStr: string) {
   if (session.state !== 'ESTABLISHED')
-    throw new Error('Channel constraint violation');
+    throw new Error('Channel state constraint violation.');
   if (!session.CKs) stepDH(session);
   if (!session.CKs || !session.pendingKemCt || !session.KEMs)
-    throw new Error('Missing sending chain (CKs)');
+    throw new Error('Missing sending chain (CKs).');
 
   const { key, nonce, nextCk } = deriveMsgKeys(session.CKs);
 
@@ -390,10 +390,10 @@ export async function EncryptMessage(session: Session, plaintextStr: string) {
 }
 
 export async function DecryptMessage(packetBytes: Uint8Array) {
-  if (packetBytes.length < 3220) throw new Error('Invalid packet');
+  if (packetBytes.length < 3220) throw new Error('Invalid message packet.');
 
   const { type } = parseHeader(packetBytes);
-  if (type !== Config.PACKET_TYPES.MSG) throw new Error('Invalid packet type');
+  if (type !== Config.PACKET_TYPES.MSG) throw new Error('Invalid message packet type.');
 
   let offset = 12;
   const cIdBytes = packetBytes.slice(offset, (offset += 16));
@@ -416,7 +416,7 @@ export async function DecryptMessage(packetBytes: Uint8Array) {
     'conversationId',
     encodeBase64URL(cIdBytes),
   );
-  if (!session || !session.DHr) throw new Error('Decryption failed');
+  if (!session || !session.DHr) throw new Error('Message decryption failed.');
 
   const aad = concatBytes(
     utf8('ECP-MSG-v1'),
@@ -442,25 +442,26 @@ export async function DecryptMessage(packetBytes: Uint8Array) {
       await DB.put('sessions', session);
       return { session, plaintext: new TextDecoder().decode(ptext) };
     } catch {
-      throw new Error('Decryption failed (Skipped key)');
+      throw new Error('Message decryption failed.');
     }
   }
 
-  let tempCKr = session.CKr ? new Uint8Array(session.CKr) : undefined;
-  let tempRK = new Uint8Array(session.RK);
+  let tempCKr = session.CKr;
+  let tempRK = session.RK;
   let tempPN = session.PN,
     tempNs = session.Ns,
     tempNr = session.Nr;
   let stepped = false;
 
-  const stage = { ...session };
+  const stage: Session = { ...session };
+  const newSkippedKeys: Record<string, string> = {};
 
   if (!constantTimeCompare(dhPubBytes, session.DHr.pk)) {
     stepped = true;
     if (tempCKr)
       while (tempNr < pn) {
         const { mk, nextCk } = deriveMsgKeys(tempCKr);
-        session.skippedKeys[`${encodeBase64URL(session.DHr.pk)}_${tempNr}`] =
+        newSkippedKeys[`${encodeBase64URL(session.DHr.pk)}_${tempNr}`] =
           encodeBase64URL(mk);
         tempCKr = nextCk;
         tempNr++;
@@ -469,7 +470,7 @@ export async function DecryptMessage(packetBytes: Uint8Array) {
     tempPN = tempNs;
     tempNs = 0;
     tempNr = 0;
-    if (!stage.KEMs) throw new Error('Decryption failed: Missing local KEMs');
+    if (!stage.KEMs) throw new Error('Message decryption failed.');
 
     const dh1 = getSharedSecretX25519(stage.DHs.sk, dhPubBytes);
     const kemSS = decapsulateMLKEM1024(kemCt, stage.KEMs.sk);
@@ -493,34 +494,34 @@ export async function DecryptMessage(packetBytes: Uint8Array) {
     stage.pendingKemCt = kemRes.cipherText;
   }
 
-  if (n < tempNr || n - tempNr > 2000)
-    throw new Error('Decryption failed: sequence out of bounds');
+  if (n < tempNr || n - tempNr > 2000) throw new Error('Message decryption failed.');
 
   while (tempNr < n) {
-    if (!tempCKr) throw new Error('Decryption failed: missing CKr');
+    if (!tempCKr) throw new Error('Message decryption failed.');
     const { mk, nextCk } = deriveMsgKeys(tempCKr);
-    session.skippedKeys[`${dhKeyTag}_${tempNr}`] = encodeBase64URL(mk);
+    newSkippedKeys[`${dhKeyTag}_${tempNr}`] = encodeBase64URL(mk);
     tempCKr = nextCk;
     tempNr++;
   }
 
-  if (!tempCKr) throw new Error('Decryption failed: missing final CKr');
+  if (!tempCKr) throw new Error('Message decryption failed.');
 
   const { key, nonce, nextCk } = deriveMsgKeys(tempCKr);
 
   let ptext: Uint8Array;
   try {
     ptext = decryptGCM(key, nonce, packetBytes.slice(offset), aad);
-  } catch (e) {
-    throw new Error('Decryption failed (Payload MAC)');
+  } catch {
+    throw new Error('Message decryption failed.');
   }
 
-  session.CKr = new Uint8Array(nextCk);
+  session.CKr = nextCk;
   if (stepped) Object.assign(session, stage, { RK: tempRK });
 
   session.PN = tempPN;
   session.Ns = tempNs;
   session.Nr = tempNr + 1;
+  session.skippedKeys = { ...session.skippedKeys, ...newSkippedKeys };
 
   const ks = Object.keys(session.skippedKeys);
   if (ks.length > 100)

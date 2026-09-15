@@ -1,7 +1,7 @@
 @import 'tailwindcss';
 
 @theme {
-  @keyframes fadeIn {
+  @keyframes fade-in {
     from {
       opacity: 0;
     }
@@ -9,7 +9,7 @@
       opacity: 1;
     }
   }
-  --animate-fadeIn: fadeIn 0.2s ease-in-out;
+  --animate-fade-in: fade-in 0.2s ease-out;
 }
 
 :root {
@@ -37,5 +37,5 @@ body {
 }
 
 .view-transition {
-  @apply animate-fadeIn;
+  @apply animate-fade-in;
 }
