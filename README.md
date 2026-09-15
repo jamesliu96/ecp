@@ -7,7 +7,6 @@ A serverless, pure-frontend web implementation of the End-to-End Encrypted Clipb
 - **Zero-Backend Processing:** Operates strictly on the client side. Messages and media are exchanged out-of-band via user-selected transport channels, such as instant messengers, email, shared documents, social media, QR codes, or physical notes.
 - **Local Persistence:** Encrypted session states, keys, and identity profiles reside entirely within client-side `IndexedDB` storage.
 - **Post-Quantum Cryptography (PQC):** Combines classical cryptography with NIST Level 5 PQC standards via `@noble` libraries (`@noble/ciphers`, `@noble/curves`, `@noble/hashes`, `@noble/post-quantum`).
-- **Zeroization & Memory Hygiene:** Ephemeral key material undergoes explicit zeroization immediately following cryptographic operations.
 
 ## Threat Model & Security Boundaries
 
@@ -136,11 +135,10 @@ To bind ciphertexts to their exact wire headers and identities, AEAD operations 
 
 ### Ratchet State Machine & Error Handling
 
-To maintain synchronization and prevent abuse, ECP dictates specific constraints on `MSG` frame validation.
+To maintain synchronization and prevent abuse, ECP dictates specific constraints on `MSG` frame validation:
 
 - **Sequence Progression & Replay Drop:** The protocol demands strict forward progression. During `DecryptMessage`, the parsed sequence number ($N$) is compared against the expected receive sequence ($N_r$). If $N < N_r$, the message is dropped immediately, throwing a `"Message frame out of order or replayed"` error.
 - **Gap Limitation & Skipped Keys:** ECP handles dropped packets by advancing the receiving chain up to the target sequence $N$. To prevent CPU exhaustion or memory starvation attacks via continuous HMAC chaining, ECP enforces a strict limit: if $N - N_r > 2000$, it throws an `"Excessive message gap"` exception.
-- **Ephemeral Zeroization:** During skipped frame advancement ($N_r < N$) and standard ratchet steps, intermediate receiving chain keys ($CK_r$), root keys ($RK$), and shared secrets ($DH$, $KEM_{SS}$) are wiped from RAM using `.fill(0)` immediately after use.
 
 ### Cryptographic Derivations & Formulas
 

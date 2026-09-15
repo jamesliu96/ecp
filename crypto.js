@@ -51,13 +51,6 @@ export const concatBytes = (...items) => {
     }
     return result;
 };
-export const memcmp = (a, b) => {
-    const len = Math.min(a.length, b.length);
-    for (let i = 0; i < len; i++)
-        if (a[i] !== b[i])
-            return a[i] < b[i] ? -1 : 1;
-    return a.length === b.length ? 0 : a.length < b.length ? -1 : 1;
-};
 export const constantTimeCompare = (a, b) => {
     if (a.length !== b.length)
         return false;

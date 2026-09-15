@@ -75,12 +75,6 @@ export const concatBytes = (...items: Uint8Array[]) => {
   return result;
 };
 
-export const memcmp = (a: Uint8Array, b: Uint8Array) => {
-  const len = Math.min(a.length, b.length);
-  for (let i = 0; i < len; i++) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
-  return a.length === b.length ? 0 : a.length < b.length ? -1 : 1;
-};
-
 export const constantTimeCompare = (
   a: ArrayLike<number>,
   b: ArrayLike<number>,

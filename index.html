@@ -426,11 +426,9 @@
         try {
           const registration = await navigator.serviceWorker.register('/sw.js');
           console.info('[ServiceWorker] Registration complete.');
-
           registration.addEventListener('updatefound', () => {
             const newWorker = registration.installing;
             if (!newWorker) return;
-
             newWorker.addEventListener('statechange', () => {
               if (
                 newWorker.state === 'installed' &&
@@ -441,7 +439,6 @@
               }
             });
           });
-
           setInterval(() => {
             registration.update();
           }, 60000);

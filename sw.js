@@ -1,5 +1,5 @@
 const CACHE_NAME = 'ecp-v1';
-// sha256:4e789dd934dc68bd7c6d64ea00468d8a7792ddc14cbd866ff2ec9e6074025c30
+// sha256:f2de2147debbdb87ab6d24b430ffb3887d6679a7b5011aa72ef1981ade006ea1
 const CACHE = [
   '/',
   '/index.html',
