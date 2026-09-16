@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ecp-9bcaf11291ea400145713158c729b293434a2100ecb2b87b1978f1a574b00b18';
+const CACHE_NAME = 'ecp-0e8917b93676dab39f206ae6345c8b5b9208ac2b1376cfbfdabc33bba245180a';
 const CACHE = [
   '/',
   '/index.html',
@@ -17,6 +17,8 @@ const CACHE = [
   '/identity.js.map',
   '/main.js',
   '/main.js.map',
+  '/mutex.js',
+  '/mutex.js.map',
   '/ratchet.js',
   '/ratchet.js.map',
   '/storage.js',

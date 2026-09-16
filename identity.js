@@ -1,27 +1,35 @@
 import { Config } from './config.js';
 import { concatBytes, keygenEd25519, keygenMLDSA87, keygenX25519, keygenMLKEM1024, sha256, encodeBase64URL, } from './crypto.js';
+import { Mutex } from './mutex.js';
 import { DB } from './storage.js';
+const mutex = new Mutex();
 export const getLocalIdentity = async () => {
-    let id = await DB.get('identity', 'local');
-    if (!id) {
-        const ecKP = keygenEd25519();
-        const dsaKP = keygenMLDSA87();
-        const dhKP = keygenX25519();
-        const kemKP = keygenMLKEM1024();
-        id = {
-            id: 'local',
-            ecSk: ecKP.secretKey,
-            ecPk: ecKP.publicKey,
-            dsaSk: dsaKP.secretKey,
-            dsaPk: dsaKP.publicKey,
-            dhSk: dhKP.secretKey,
-            dhPk: dhKP.publicKey,
-            kemSk: kemKP.secretKey,
-            kemPk: kemKP.publicKey,
-        };
-        await DB.put('identity', id);
+    const unlock = await mutex.lock();
+    try {
+        let id = await DB.get('identity', 'local');
+        if (!id) {
+            const ecKP = keygenEd25519();
+            const dsaKP = keygenMLDSA87();
+            const dhKP = keygenX25519();
+            const kemKP = keygenMLKEM1024();
+            id = {
+                id: 'local',
+                ecSk: ecKP.secretKey,
+                ecPk: ecKP.publicKey,
+                dsaSk: dsaKP.secretKey,
+                dsaPk: dsaKP.publicKey,
+                dhSk: dhKP.secretKey,
+                dhPk: dhKP.publicKey,
+                kemSk: kemKP.secretKey,
+                kemPk: kemKP.publicKey,
+            };
+            await DB.put('identity', id);
+        }
+        return id;
     }
-    return id;
+    finally {
+        unlock();
+    }
 };
 export const serializeIdentityPublic = (id) => concatBytes(new Uint8Array([Config.IDENTITY_VERSION]), id.ecPk, id.dsaPk, id.dhPk, id.kemPk);
 export const parseIdentityPublic = (bytes) => {

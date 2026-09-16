@@ -8,32 +8,40 @@ import {
   sha256,
   encodeBase64URL,
 } from './crypto.js';
+import { Mutex } from './mutex.js';
 import { DB } from './storage.js';
 import type { Identity } from './types.js';
 
+const mutex = new Mutex();
+
 export const getLocalIdentity = async () => {
-  let id = await DB.get('identity', 'local');
+  const unlock = await mutex.lock();
+  try {
+    let id = await DB.get('identity', 'local');
 
-  if (!id) {
-    const ecKP = keygenEd25519();
-    const dsaKP = keygenMLDSA87();
-    const dhKP = keygenX25519();
-    const kemKP = keygenMLKEM1024();
+    if (!id) {
+      const ecKP = keygenEd25519();
+      const dsaKP = keygenMLDSA87();
+      const dhKP = keygenX25519();
+      const kemKP = keygenMLKEM1024();
 
-    id = {
-      id: 'local',
-      ecSk: ecKP.secretKey,
-      ecPk: ecKP.publicKey,
-      dsaSk: dsaKP.secretKey,
-      dsaPk: dsaKP.publicKey,
-      dhSk: dhKP.secretKey,
-      dhPk: dhKP.publicKey,
-      kemSk: kemKP.secretKey,
-      kemPk: kemKP.publicKey,
-    };
-    await DB.put('identity', id);
+      id = {
+        id: 'local',
+        ecSk: ecKP.secretKey,
+        ecPk: ecKP.publicKey,
+        dsaSk: dsaKP.secretKey,
+        dsaPk: dsaKP.publicKey,
+        dhSk: dhKP.secretKey,
+        dhPk: dhKP.publicKey,
+        kemSk: kemKP.secretKey,
+        kemPk: kemKP.publicKey,
+      };
+      await DB.put('identity', id);
+    }
+    return id;
+  } finally {
+    unlock();
   }
-  return id;
 };
 
 export const serializeIdentityPublic = (id: Identity) =>
