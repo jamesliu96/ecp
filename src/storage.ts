@@ -100,8 +100,10 @@ export const DB = (() => {
     },
 
     delete: async <S extends StoreName>(storeName: S, key: string) => {
-      if (storeName === 'sessions' || storeName === 'contacts')
+      if (storeName === 'sessions') {
         memorySessions.delete(key);
+        if (!Settings.get().persistHandshakes) return;
+      }
       const db = await getDB();
       return new Promise<void>((resolve, reject) => {
         const req = db

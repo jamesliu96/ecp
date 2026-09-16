@@ -20,6 +20,7 @@ import {
   ProcessResp,
   DecryptMessage,
 } from './ratchet.js';
+import { Message } from './types.js';
 
 const State = {
   currentContactFp: undefined as string | undefined,
@@ -27,20 +28,20 @@ const State = {
   searchQuery: '',
 };
 
+let toastTimer: number | undefined;
 const UI = {
   $: <T extends HTMLElement>(s: string) => {
     const el = document.querySelector(s);
     if (!el) throw new Error(`Required DOM element not found: ${s}`);
     return el as T;
   },
-  toastTimer: undefined as number | undefined,
   showToast: (msg: string, duration = 3500) => {
     const t = UI.$('#toast');
     UI.$('#toast-msg').textContent = msg;
     t.classList.remove('opacity-0', 'pointer-events-none');
     t.classList.add('opacity-100');
-    clearTimeout(UI.toastTimer);
-    UI.toastTimer = setTimeout(() => {
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
       t.classList.remove('opacity-100');
       t.classList.add('opacity-0', 'pointer-events-none');
     }, duration);
@@ -125,9 +126,11 @@ async function renderSidebar() {
   );
 
   let contacts = await DB.getAll('contacts');
-  if (!State.showArchived) contacts = contacts.filter((c) => !c.archived);
+  if (!State.showArchived)
+    contacts = contacts.filter(({ archived }) => !archived);
 
   const sessions = await DB.getAll('sessions');
+
   const frag = document.createDocumentFragment();
 
   for (const c of contacts) {
@@ -141,17 +144,19 @@ async function renderSidebar() {
 
     let unreadCount = 0;
     if (!isActive) {
-      const session = sessions.find((s) => s.contactFp === c.fingerprint);
-      if (session) {
-        const chatMsgs = await DB.getAllByIndex(
-          'messages',
-          'conversationId',
-          session.conversationId,
-        );
-        unreadCount = chatMsgs.filter(
-          (m) => !m.isMe && m.timestamp > c.lastReadTimestamp,
+      const session = sessions.find(
+        ({ contactFp }) => contactFp === c.fingerprint,
+      );
+      if (session)
+        unreadCount = (
+          await DB.getAllByIndex(
+            'messages',
+            'conversationId',
+            session.conversationId,
+          )
+        ).filter(
+          ({ isMe, timestamp }) => !isMe && timestamp > c.lastReadTimestamp,
         ).length;
-      }
     }
 
     const topRow = document.createElement('div');
@@ -162,7 +167,7 @@ async function renderSidebar() {
     nameSpan.textContent = c.name;
     topRow.appendChild(nameSpan);
 
-    if (unreadCount > 0) {
+    if (unreadCount) {
       const badge = document.createElement('span');
       badge.className =
         'bg-emerald-500 text-slate-950 text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 shadow-sm';
@@ -246,7 +251,9 @@ async function renderChatLog(isInitialView = false) {
   const currentSeq = ++renderSeq;
 
   const sessions = await DB.getAll('sessions');
-  const session = sessions.find((s) => s.contactFp === State.currentContactFp);
+  const session = sessions.find(
+    ({ contactFp }) => contactFp === State.currentContactFp,
+  );
   if (currentSeq !== renderSeq) return;
 
   if (session)
@@ -265,7 +272,7 @@ async function renderChatLog(isInitialView = false) {
         UI.$<HTMLButtonElement>('#btn-attach').disabled =
           session.state === 'HANDSHAKE_SENT';
     } else {
-      UI.$('#chat-status-text').textContent = 'Channel established.';
+      UI.$('#chat-status-text').textContent = 'Channel Established';
       UI.$('#chat-status-dot').className =
         'w-2 h-2 rounded-full bg-emerald-400';
       UI.$<HTMLInputElement>('#chat-input').disabled =
@@ -283,6 +290,9 @@ async function renderChatLog(isInitialView = false) {
   }
 
   const query = State.searchQuery.toLowerCase();
+  const highlightRegex = query
+    ? new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
+    : undefined;
 
   const allChatMsgs = session
     ? await DB.getAllByIndex(
@@ -330,14 +340,10 @@ async function renderChatLog(isInitialView = false) {
       aud.controls = true;
       aud.className = 'max-w-full my-1';
       div.appendChild(aud);
-    } else if (query) {
+    } else if (query && highlightRegex) {
       const span = document.createElement('span');
       div.appendChild(span);
-      const regex = new RegExp(
-        `(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`,
-        'gi',
-      );
-      for (const part of m.text.split(regex))
+      for (const part of m.text.split(highlightRegex))
         if (part.toLowerCase() === query) {
           const partSpan = document.createElement('span');
           partSpan.className =
@@ -496,9 +502,14 @@ UI.$('#btn-add-contact').onclick = async () => {
     const bytes = parseEnvelope(text);
     const fp = calculateFingerprint(bytes);
     const localFp = await getLocalFingerprint();
-    if (fp === localFp) return UI.showToast('Cannot link own identity.');
-    if (await DB.get('contacts', fp))
-      return UI.showToast('Peer already exists.');
+    if (fp === localFp) {
+      UI.showToast('Cannot link own identity.');
+      return;
+    }
+    if (await DB.get('contacts', fp)) {
+      UI.showToast('Peer already exists.');
+      return;
+    }
 
     UI.showModal(`
       <div class="p-4 bg-slate-900 border-b border-slate-800"><h3 class="font-bold text-slate-200">Link New Peer</h3></div>
@@ -742,17 +753,21 @@ UI.$('#btn-global-settings').onclick = () => {
 
 async function processClipboardText(rawText: string) {
   const text = rawText.trim();
-  if (!text.startsWith(Config.PREFIX))
-    return UI.showToast('Invalid ECP envelope format.');
-  if (text.length > Config.MAX_PACKET_SIZE)
-    return UI.showToast('Packet exceeds maximum size limits.');
+  if (!text.startsWith(Config.PREFIX)) {
+    UI.showToast('Invalid ECP envelope format.');
+    return;
+  }
+  if (text.length > Config.MAX_PACKET_SIZE) {
+    UI.showToast('Packet exceeds maximum size limits.');
+    return;
+  }
 
   try {
     const bytes = parseEnvelope(text);
-    if (bytes[0] === Config.IDENTITY_VERSION && bytes.length > 1000)
-      return UI.showToast(
-        "Identity bundle detected. Please use 'Link New Peer'.",
-      );
+    if (bytes[0] === Config.IDENTITY_VERSION && bytes.length === 4225) {
+      UI.showToast("Identity bundle detected. Please use 'Link New Peer'.");
+      return;
+    }
 
     let offset = 0;
     let sessionChanged = false;

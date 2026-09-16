@@ -9,6 +9,7 @@ const State = {
     showArchived: false,
     searchQuery: '',
 };
+let toastTimer;
 const UI = {
     $: (s) => {
         const el = document.querySelector(s);
@@ -16,14 +17,13 @@ const UI = {
             throw new Error(`Required DOM element not found: ${s}`);
         return el;
     },
-    toastTimer: undefined,
     showToast: (msg, duration = 3500) => {
         const t = UI.$('#toast');
         UI.$('#toast-msg').textContent = msg;
         t.classList.remove('opacity-0', 'pointer-events-none');
         t.classList.add('opacity-100');
-        clearTimeout(UI.toastTimer);
-        UI.toastTimer = setTimeout(() => {
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
             t.classList.remove('opacity-100');
             t.classList.add('opacity-0', 'pointer-events-none');
         }, duration);
@@ -95,7 +95,7 @@ async function renderSidebar() {
     UI.$('#my-fingerprint').textContent = calculateFingerprint(serializeIdentityPublic(await getLocalIdentity()));
     let contacts = await DB.getAll('contacts');
     if (!State.showArchived)
-        contacts = contacts.filter((c) => !c.archived);
+        contacts = contacts.filter(({ archived }) => !archived);
     const sessions = await DB.getAll('sessions');
     const frag = document.createDocumentFragment();
     for (const c of contacts) {
@@ -106,11 +106,9 @@ async function renderSidebar() {
             : 'bg-slate-900/80 border-slate-800 text-slate-300 hover:bg-slate-800/80 hover:border-slate-700'}`;
         let unreadCount = 0;
         if (!isActive) {
-            const session = sessions.find((s) => s.contactFp === c.fingerprint);
-            if (session) {
-                const chatMsgs = await DB.getAllByIndex('messages', 'conversationId', session.conversationId);
-                unreadCount = chatMsgs.filter((m) => !m.isMe && m.timestamp > c.lastReadTimestamp).length;
-            }
+            const session = sessions.find(({ contactFp }) => contactFp === c.fingerprint);
+            if (session)
+                unreadCount = (await DB.getAllByIndex('messages', 'conversationId', session.conversationId)).filter(({ isMe, timestamp }) => !isMe && timestamp > c.lastReadTimestamp).length;
         }
         const topRow = document.createElement('div');
         topRow.className = 'flex justify-between items-center gap-2';
@@ -118,7 +116,7 @@ async function renderSidebar() {
         nameSpan.className = 'font-medium truncate flex-1';
         nameSpan.textContent = c.name;
         topRow.appendChild(nameSpan);
-        if (unreadCount > 0) {
+        if (unreadCount) {
             const badge = document.createElement('span');
             badge.className =
                 'bg-emerald-500 text-slate-950 text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 shadow-sm';
@@ -191,7 +189,7 @@ async function renderChatLog(isInitialView = false) {
         return;
     const currentSeq = ++renderSeq;
     const sessions = await DB.getAll('sessions');
-    const session = sessions.find((s) => s.contactFp === State.currentContactFp);
+    const session = sessions.find(({ contactFp }) => contactFp === State.currentContactFp);
     if (currentSeq !== renderSeq)
         return;
     if (session)
@@ -209,7 +207,7 @@ async function renderChatLog(isInitialView = false) {
                         session.state === 'HANDSHAKE_SENT';
         }
         else {
-            UI.$('#chat-status-text').textContent = 'Channel established.';
+            UI.$('#chat-status-text').textContent = 'Channel Established';
             UI.$('#chat-status-dot').className =
                 'w-2 h-2 rounded-full bg-emerald-400';
             UI.$('#chat-input').disabled =
@@ -226,6 +224,9 @@ async function renderChatLog(isInitialView = false) {
                     false;
     }
     const query = State.searchQuery.toLowerCase();
+    const highlightRegex = query
+        ? new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
+        : undefined;
     const allChatMsgs = session
         ? await DB.getAllByIndex('messages', 'conversationId', session.conversationId)
         : [];
@@ -263,11 +264,10 @@ async function renderChatLog(isInitialView = false) {
             aud.className = 'max-w-full my-1';
             div.appendChild(aud);
         }
-        else if (query) {
+        else if (query && highlightRegex) {
             const span = document.createElement('span');
             div.appendChild(span);
-            const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-            for (const part of m.text.split(regex))
+            for (const part of m.text.split(highlightRegex))
                 if (part.toLowerCase() === query) {
                     const partSpan = document.createElement('span');
                     partSpan.className =
@@ -405,10 +405,14 @@ UI.$('#btn-add-contact').onclick = async () => {
         const bytes = parseEnvelope(text);
         const fp = calculateFingerprint(bytes);
         const localFp = await getLocalFingerprint();
-        if (fp === localFp)
-            return UI.showToast('Cannot link own identity.');
-        if (await DB.get('contacts', fp))
-            return UI.showToast('Peer already exists.');
+        if (fp === localFp) {
+            UI.showToast('Cannot link own identity.');
+            return;
+        }
+        if (await DB.get('contacts', fp)) {
+            UI.showToast('Peer already exists.');
+            return;
+        }
         UI.showModal(`
       <div class="p-4 bg-slate-900 border-b border-slate-800"><h3 class="font-bold text-slate-200">Link New Peer</h3></div>
       <div class="p-4">
@@ -645,14 +649,20 @@ UI.$('#btn-global-settings').onclick = () => {
 };
 async function processClipboardText(rawText) {
     const text = rawText.trim();
-    if (!text.startsWith(Config.PREFIX))
-        return UI.showToast('Invalid ECP envelope format.');
-    if (text.length > Config.MAX_PACKET_SIZE)
-        return UI.showToast('Packet exceeds maximum size limits.');
+    if (!text.startsWith(Config.PREFIX)) {
+        UI.showToast('Invalid ECP envelope format.');
+        return;
+    }
+    if (text.length > Config.MAX_PACKET_SIZE) {
+        UI.showToast('Packet exceeds maximum size limits.');
+        return;
+    }
     try {
         const bytes = parseEnvelope(text);
-        if (bytes[0] === Config.IDENTITY_VERSION && bytes.length > 1000)
-            return UI.showToast("Identity bundle detected. Please use 'Link New Peer'.");
+        if (bytes[0] === Config.IDENTITY_VERSION && bytes.length === 4225) {
+            UI.showToast("Identity bundle detected. Please use 'Link New Peer'.");
+            return;
+        }
         let offset = 0;
         let sessionChanged = false;
         while (offset < bytes.length) {

@@ -311,8 +311,8 @@ export async function ProcessResp(packetBytes: Uint8Array) {
   }
 
   if (!targetSession || !respPlaintext) {
-    if (sessions.some((s) => s.state === 'ESTABLISHED'))
-      return { alreadyEstablished: true, session: sessions[0] };
+    const established = sessions.find(({ state }) => state === 'ESTABLISHED');
+    if (established) return { alreadyEstablished: true, session: established };
     throw new Error(
       'RESP packet processing failed: No matching handshake session found.',
     );

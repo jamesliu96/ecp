@@ -58,8 +58,7 @@ const fullHashHex = await computeFullHash(allAssets);
 
 const formattedAssets = allAssets.map((asset) => `  '${asset}',`).join('\n');
 
-const swTemplate = `const CACHE_NAME = 'ecp-v1';
-// sha256:${fullHashHex}
+const swTemplate = `const CACHE_NAME = 'ecp-${fullHashHex}';
 const CACHE = [
 ${formattedAssets}
 ];

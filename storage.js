@@ -69,8 +69,11 @@ export const DB = (() => {
             });
         },
         delete: async (storeName, key) => {
-            if (storeName === 'sessions' || storeName === 'contacts')
+            if (storeName === 'sessions') {
                 memorySessions.delete(key);
+                if (!Settings.get().persistHandshakes)
+                    return;
+            }
             const db = await getDB();
             return new Promise((resolve, reject) => {
                 const req = db
