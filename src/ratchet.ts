@@ -1,4 +1,10 @@
-import { buildHeader, parseHeader, encodeUTF8, decodeUTF8 } from './codec.js';
+import {
+  buildHeader,
+  parseHeader,
+  encodeUTF8,
+  decodeUTF8,
+  zeros,
+} from './codec.js';
 import { Config } from './config.js';
 import {
   encodeBase64URL,
@@ -33,22 +39,19 @@ const deriveSymmetric = (
   keyLabel: string,
   nonceLabel: string,
 ) => ({
-  key: hkdfSHA256(mk, new Uint8Array(32), encodeUTF8(keyLabel), 32),
+  key: hkdfSHA256(mk, zeros(32), encodeUTF8(keyLabel), 32),
   nonce: hmacSHA256(mk, encodeUTF8(nonceLabel)).slice(0, 12),
 });
 
 const kdfRoot = (rk: Uint8Array, dh: Uint8Array, kem: Uint8Array) =>
   hkdfSHA256(concatBytes(dh, kem), rk, encodeUTF8('ECP-DR-RK-v1'), 64);
 
-const deriveInitKeys = (sk: Uint8Array) => {
-  const mk = hkdfSHA256(
-    sk,
-    new Uint8Array(32),
-    encodeUTF8('ECP-INIT-MESSAGE-v1'),
-    32,
+const deriveInitKeys = (sk: Uint8Array) =>
+  deriveSymmetric(
+    hkdfSHA256(sk, zeros(32), encodeUTF8('ECP-INIT-MESSAGE-v1'), 32),
+    'ECP-AES256GCM-v1',
+    'ECP-INIT-NONCE',
   );
-  return deriveSymmetric(mk, 'ECP-AES256GCM-v1', 'ECP-INIT-NONCE');
-};
 
 const deriveMsgKeys = (ck: Uint8Array) => {
   const mk = hmacSHA256(ck, new Uint8Array([0x01]));
@@ -78,7 +81,7 @@ export async function CreateInit(contactFp: string, plaintextStr: string) {
 
   const SK = hkdfSHA256(
     concatBytes(encodeUTF8('ECP-INIT-v1'), dh1, kemRes.sharedSecret),
-    new Uint8Array(32),
+    zeros(32),
     encodeUTF8(''),
     32,
   );
@@ -132,7 +135,7 @@ export async function CreateInit(contactFp: string, plaintextStr: string) {
     DHs: { sk: ekKP.secretKey, pk: ekKP.publicKey },
     KEMs: { sk: local.kemSk, pk: local.kemPk },
     KEMr: { pk: peerId.kemPk },
-    RK: hkdfSHA256(SK, new Uint8Array(32), encodeUTF8('ECP-DR-ROOT-v1'), 32),
+    RK: hkdfSHA256(SK, zeros(32), encodeUTF8('ECP-DR-ROOT-v1'), 32),
     Ns: 0,
     Nr: 0,
     PN: 0,
@@ -147,7 +150,9 @@ export async function CreateInit(contactFp: string, plaintextStr: string) {
 export async function ProcessInit(packetBytes: Uint8Array) {
   const local = await getLocalIdentity();
   const localPubBytes = serializeIdentityPublic(local);
-  const { headerBytes } = parseHeader(packetBytes);
+  const { type, headerBytes } = parseHeader(packetBytes);
+  if (type !== Config.PACKET_TYPES.INIT)
+    throw new Error('Protocol type mismatch.');
 
   let offset = 12;
   const fixedPayloadLen = 4225 * 2 + 32 + 1568 + 4691;
@@ -201,7 +206,7 @@ export async function ProcessInit(packetBytes: Uint8Array) {
   const kemSS = decapsulateMLKEM1024(kemCt, local.kemSk);
   const SK = hkdfSHA256(
     concatBytes(encodeUTF8('ECP-INIT-v1'), dh1, kemSS),
-    new Uint8Array(32),
+    zeros(32),
     encodeUTF8(''),
     32,
   );
@@ -214,12 +219,7 @@ export async function ProcessInit(packetBytes: Uint8Array) {
     concatBytes(headerBytes, packetBytes.slice(12, 12 + fixedPayloadLen)),
   );
 
-  const RK0 = hkdfSHA256(
-    SK,
-    new Uint8Array(32),
-    encodeUTF8('ECP-DR-ROOT-v1'),
-    32,
-  );
+  const RK0 = hkdfSHA256(SK, zeros(32), encodeUTF8('ECP-DR-ROOT-v1'), 32);
   const dhsKP = keygenX25519();
   const nkemKP = keygenMLKEM1024();
   const dh2 = getSharedSecretX25519(dhsKP.secretKey, ekPubBytes);
@@ -370,7 +370,7 @@ export async function EncryptMessage(session: Session, plaintextStr: string) {
 
   const cIdBytes = decodeBase64URL(session.conversationId);
   const lPubBytes = serializeIdentityPublic(await getLocalIdentity());
-  const headerVals = new Uint8Array(8);
+  const headerVals = zeros(8);
   const dv = new DataView(headerVals.buffer);
   dv.setUint32(0, session.PN);
   dv.setUint32(4, session.Ns);
@@ -409,7 +409,7 @@ export async function DecryptMessage(packetBytes: Uint8Array) {
 
   const { type } = parseHeader(packetBytes);
   if (type !== Config.PACKET_TYPES.MSG)
-    throw new Error('Invalid message packet type.');
+    throw new Error('Protocol type mismatch.');
 
   let offset = 12;
   const cIdBytes = packetBytes.slice(offset, (offset += 16));

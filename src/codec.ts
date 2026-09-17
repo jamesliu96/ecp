@@ -1,8 +1,13 @@
 import { Config } from './config.js';
 import { decodeBase64URL, encodeBase64URL } from './crypto.js';
 
+export const encodeUTF8 = (v: string) => new TextEncoder().encode(v);
+export const decodeUTF8 = (v: Uint8Array) => new TextDecoder().decode(v);
+
+export const zeros = (size: number) => new Uint8Array(size);
+
 export const buildHeader = (type: number, payloadLength: number) => {
-  const hdr = new Uint8Array(12);
+  const hdr = zeros(12);
   hdr.set(Config.PACKET_MAGIC, 0);
   hdr[4] = Config.WIRE_PROTOCOL_VERSION;
   hdr[5] = type;
@@ -37,6 +42,3 @@ export const parseEnvelope = (str: string) => {
     throw new Error('Invalid ECP envelope format.');
   return decodeBase64URL(trimmed.substring(Config.PREFIX.length).trim());
 };
-
-export const encodeUTF8 = (v: string) => new TextEncoder().encode(v);
-export const decodeUTF8 = (v: Uint8Array) => new TextDecoder().decode(v);

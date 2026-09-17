@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ecp-0e8917b93676dab39f206ae6345c8b5b9208ac2b1376cfbfdabc33bba245180a';
+const CACHE_NAME = 'ecp-8fa8314c36f352e439cde45ca1e51bec1d1560d5a7db67d1b0cfcfa6db41a8a1';
 const CACHE = [
   '/',
   '/index.html',

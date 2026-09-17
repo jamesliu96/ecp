@@ -1,17 +1,14 @@
-import { buildHeader, parseHeader, encodeUTF8, decodeUTF8 } from './codec.js';
+import { buildHeader, parseHeader, encodeUTF8, decodeUTF8, zeros, } from './codec.js';
 import { Config } from './config.js';
 import { encodeBase64URL, decodeBase64URL, concatBytes, sha256, hkdfSHA256, hmacSHA256, encryptGCM, decryptGCM, encapsulateMLKEM1024, decapsulateMLKEM1024, keygenX25519, getSharedSecretX25519, keygenMLKEM1024, signComposite, verifyComposite, constantTimeCompare, } from './crypto.js';
 import { getLocalFingerprint, getLocalIdentity, serializeIdentityPublic, parseIdentityPublic, calculateFingerprint, } from './identity.js';
 import { DB } from './storage.js';
 const deriveSymmetric = (mk, keyLabel, nonceLabel) => ({
-    key: hkdfSHA256(mk, new Uint8Array(32), encodeUTF8(keyLabel), 32),
+    key: hkdfSHA256(mk, zeros(32), encodeUTF8(keyLabel), 32),
     nonce: hmacSHA256(mk, encodeUTF8(nonceLabel)).slice(0, 12),
 });
 const kdfRoot = (rk, dh, kem) => hkdfSHA256(concatBytes(dh, kem), rk, encodeUTF8('ECP-DR-RK-v1'), 64);
-const deriveInitKeys = (sk) => {
-    const mk = hkdfSHA256(sk, new Uint8Array(32), encodeUTF8('ECP-INIT-MESSAGE-v1'), 32);
-    return deriveSymmetric(mk, 'ECP-AES256GCM-v1', 'ECP-INIT-NONCE');
-};
+const deriveInitKeys = (sk) => deriveSymmetric(hkdfSHA256(sk, zeros(32), encodeUTF8('ECP-INIT-MESSAGE-v1'), 32), 'ECP-AES256GCM-v1', 'ECP-INIT-NONCE');
 const deriveMsgKeys = (ck) => {
     const mk = hmacSHA256(ck, new Uint8Array([0x01]));
     const nextCk = hmacSHA256(ck, new Uint8Array([0x02]));
@@ -35,7 +32,7 @@ export async function CreateInit(contactFp, plaintextStr) {
     const ekKP = keygenX25519();
     const kemRes = encapsulateMLKEM1024(peerId.kemPk);
     const dh1 = getSharedSecretX25519(ekKP.secretKey, peerId.dhPk);
-    const SK = hkdfSHA256(concatBytes(encodeUTF8('ECP-INIT-v1'), dh1, kemRes.sharedSecret), new Uint8Array(32), encodeUTF8(''), 32);
+    const SK = hkdfSHA256(concatBytes(encodeUTF8('ECP-INIT-v1'), dh1, kemRes.sharedSecret), zeros(32), encodeUTF8(''), 32);
     const sigInput = concatBytes(encodeUTF8('ECP-INIT-v1'), localPubBytes, peerPubBytes, ekKP.publicKey, kemRes.cipherText);
     const sig = signComposite(sigInput, local.ecSk, local.dsaSk);
     const initCrypto = deriveInitKeys(SK);
@@ -54,7 +51,7 @@ export async function CreateInit(contactFp, plaintextStr) {
         DHs: { sk: ekKP.secretKey, pk: ekKP.publicKey },
         KEMs: { sk: local.kemSk, pk: local.kemPk },
         KEMr: { pk: peerId.kemPk },
-        RK: hkdfSHA256(SK, new Uint8Array(32), encodeUTF8('ECP-DR-ROOT-v1'), 32),
+        RK: hkdfSHA256(SK, zeros(32), encodeUTF8('ECP-DR-ROOT-v1'), 32),
         Ns: 0,
         Nr: 0,
         PN: 0,
@@ -67,7 +64,9 @@ export async function CreateInit(contactFp, plaintextStr) {
 export async function ProcessInit(packetBytes) {
     const local = await getLocalIdentity();
     const localPubBytes = serializeIdentityPublic(local);
-    const { headerBytes } = parseHeader(packetBytes);
+    const { type, headerBytes } = parseHeader(packetBytes);
+    if (type !== Config.PACKET_TYPES.INIT)
+        throw new Error('Protocol type mismatch.');
     let offset = 12;
     const fixedPayloadLen = 4225 * 2 + 32 + 1568 + 4691;
     if (packetBytes.length < 12 + fixedPayloadLen + 16)
@@ -105,10 +104,10 @@ export async function ProcessInit(packetBytes) {
     }
     const dh1 = getSharedSecretX25519(local.dhSk, ekPubBytes);
     const kemSS = decapsulateMLKEM1024(kemCt, local.kemSk);
-    const SK = hkdfSHA256(concatBytes(encodeUTF8('ECP-INIT-v1'), dh1, kemSS), new Uint8Array(32), encodeUTF8(''), 32);
+    const SK = hkdfSHA256(concatBytes(encodeUTF8('ECP-INIT-v1'), dh1, kemSS), zeros(32), encodeUTF8(''), 32);
     const initCrypto = deriveInitKeys(SK);
     const ptextBytes = decryptGCM(initCrypto.key, initCrypto.nonce, ciphertext, concatBytes(headerBytes, packetBytes.slice(12, 12 + fixedPayloadLen)));
-    const RK0 = hkdfSHA256(SK, new Uint8Array(32), encodeUTF8('ECP-DR-ROOT-v1'), 32);
+    const RK0 = hkdfSHA256(SK, zeros(32), encodeUTF8('ECP-DR-ROOT-v1'), 32);
     const dhsKP = keygenX25519();
     const nkemKP = keygenMLKEM1024();
     const dh2 = getSharedSecretX25519(dhsKP.secretKey, ekPubBytes);
@@ -215,7 +214,7 @@ export async function EncryptMessage(session, plaintextStr) {
     const { key, nonce, nextCk } = deriveMsgKeys(session.CKs);
     const cIdBytes = decodeBase64URL(session.conversationId);
     const lPubBytes = serializeIdentityPublic(await getLocalIdentity());
-    const headerVals = new Uint8Array(8);
+    const headerVals = zeros(8);
     const dv = new DataView(headerVals.buffer);
     dv.setUint32(0, session.PN);
     dv.setUint32(4, session.Ns);
@@ -233,7 +232,7 @@ export async function DecryptMessage(packetBytes) {
         throw new Error('Invalid message packet length.');
     const { type } = parseHeader(packetBytes);
     if (type !== Config.PACKET_TYPES.MSG)
-        throw new Error('Invalid message packet type.');
+        throw new Error('Protocol type mismatch.');
     let offset = 12;
     const cIdBytes = packetBytes.slice(offset, (offset += 16));
     const dhPubBytes = packetBytes.slice(offset, (offset += 32));
