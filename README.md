@@ -70,13 +70,13 @@ All serialized wire payloads enforce a 50 MB limit and begin with a mandatory 12
 
 #### Header Layout (12 Bytes Total)
 
-| Offset (Bytes)  | Field Name     | Type       | Description                                            |
-| --------------- | -------------- | ---------- | ------------------------------------------------------ |
-| `0x00` – `0x03` | Magic Bytes    | `Bytes[4]` | Constant ASCII `E2E1` (`0x45`, `0x32`, `0x45`, `0x31`) |
-| `0x04`          | Version        | `UInt8`    | Wire Protocol Version (`0x01`)                         |
-| `0x05`          | Packet Type    | `UInt8`    | `0x01`: INIT, `0x02`: RESP, `0x03`: MSG                |
-| `0x06` – `0x07` | Reserved       | `Bytes[2]` | Padding bytes for 32-bit alignment (`0x0000`)          |
-| `0x08` – `0x0B` | Payload Length | `UInt32BE` | Length of payload body in bytes (Big-Endian)           |
+| Offset (Bytes) | Field Name     | Type       | Description                                            |
+| -------------- | -------------- | ---------- | ------------------------------------------------------ |
+| `0` – `3`      | Magic Bytes    | `Bytes[4]` | Constant ASCII `E2E1` (`0x45`, `0x32`, `0x45`, `0x31`) |
+| `4`            | Version        | `UInt8`    | Wire Protocol Version (`0x01`)                         |
+| `5`            | Packet Type    | `UInt8`    | `0x01`: INIT, `0x02`: RESP, `0x03`: MSG                |
+| `6` – `7`      | Reserved       | `Bytes[2]` | Padding bytes for 32-bit alignment (`0x0000`)          |
+| `8` – `11`     | Payload Length | `UInt32BE` | Length of payload body in bytes (Big-Endian)           |
 
 ### Identity Bundle Layout (4,225 Bytes Total)
 
@@ -104,26 +104,42 @@ Establishes the session, performs hybrid key agreement, and verifies mutual iden
 
 Acknowledges initialization and establishes the receiving ratchet chain.
 
+##### Wire Payload Structure (3,184 Bytes Total, Offset 12+)
+
+| Relative Offset | Field Name        | Type / Size   | Description                               |
+| --------------- | ----------------- | ------------- | ----------------------------------------- |
+| `0` – `3167`    | Encrypted Payload | `Bytes[3168]` | AES-256-GCM encrypted payload (see below) |
+| `3168` – `3183` | AES-256-GCM Tag   | `Bytes[16]`   | AEAD authentication tag                   |
+
+##### Decrypted Plaintext Payload (3,168 Bytes Total)
+
 | Decrypted Offset | Field Name                    | Type / Size   | Description                                      |
 | ---------------- | ----------------------------- | ------------- | ------------------------------------------------ |
 | `0` – `31`       | Responder Ephemeral DH PK     | `Bytes[32]`   | Responder X25519 Ephemeral Public Key            |
 | `32` – `1599`    | ML-KEM Encapsulation CT       | `Bytes[1568]` | Encapsulated secret to Initiator's static ML-KEM |
 | `1600` – `3167`  | Responder Ephemeral ML-KEM PK | `Bytes[1568]` | New ML-KEM Public Key for future ratchet steps   |
-| `3168`+          | AES-256-GCM Tag               | `Bytes[16]`   | AEAD authentication tag                          |
 
 #### 3. MSG Packet Payload (`0x03`)
 
 Carries active Hybrid Double Ratchet session payloads.
 
-| Absolute Offset | Field Name                   | Type / Size   | Description                                             |
-| --------------- | ---------------------------- | ------------- | ------------------------------------------------------- |
-| `12` – `27`     | Conversation ID              | `Bytes[16]`   | Pseudorandom session identifier                         |
-| `28` – `59`     | Ephemeral DH Key             | `Bytes[32]`   | Current ratchet step X25519 Public Key                  |
-| `60` – `1627`   | ML-KEM Ciphertext            | `Bytes[1568]` | Encapsulated secret for current ratchet step            |
-| `1628` – `3195` | Ephemeral ML-KEM PK          | `Bytes[1568]` | Fresh ML-KEM Public Key for peer's next ratchet turn    |
-| `3196` – `3199` | Previous Chain Length ($PN$) | `UInt32BE`    | Number of messages sent in previous chain               |
-| `3200` – `3203` | Message Sequence ($N_s$)     | `UInt32BE`    | Message count index in current chain                    |
-| `3204`+         | Payload Ciphertext           | Variable      | AES-256-GCM message body and 16-byte authentication tag |
+##### Unencrypted Wire Header (3,192 Bytes Total, Offset 12+)
+
+| Relative Offset | Field Name                   | Type / Size   | Description                                          |
+| --------------- | ---------------------------- | ------------- | ---------------------------------------------------- |
+| `0` – `15`      | Conversation ID              | `Bytes[16]`   | Pseudorandom session identifier                      |
+| `16` – `47`     | Ephemeral DH Key             | `Bytes[32]`   | Current ratchet step X25519 Public Key               |
+| `48` – `1615`   | ML-KEM Ciphertext            | `Bytes[1568]` | Encapsulated secret for current ratchet step         |
+| `1616` – `3183` | Ephemeral ML-KEM PK          | `Bytes[1568]` | Fresh ML-KEM Public Key for peer's next ratchet turn |
+| `3184` – `3187` | Previous Chain Length ($PN$) | `UInt32BE`    | Number of messages sent in previous chain            |
+| `3188` – `3191` | Message Sequence ($N_s$)     | `UInt32BE`    | Message count index in current chain                 |
+
+##### Payload Ciphertext (Offset 3204+)
+
+| Relative Offset | Field Name             | Type / Size | Description             |
+| --------------- | ---------------------- | ----------- | ----------------------- |
+| `3192`+         | Encrypted Message Body | Variable    | AES-256-GCM ciphertext  |
+| End $- 16$      | AES-256-GCM Tag        | `Bytes[16]` | AEAD authentication tag |
 
 ### Authenticated Additional Data (AAD) Construction
 
