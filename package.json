@@ -19,7 +19,7 @@
     "@noble/curves": "2",
     "@noble/hashes": "2",
     "@noble/post-quantum": "0",
-    "tailwind": "4"
+    "tailwindcss": "4"
   },
   "devDependencies": {
     "@tailwindcss/cli": "4",
