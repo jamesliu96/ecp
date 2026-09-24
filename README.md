@@ -170,7 +170,8 @@ Symmetric encryption keys and nonces are derived from a master key ($MK$) using:
 
 $$
 \begin{aligned}
-f_{\text{sym}}(MK, \text{keyLabel}, \text{nonceLabel}) = \big( & \text{key} = \text{HKDF-SHA256}(MK, \text{0x00}^{32}, \text{UTF8}(\text{keyLabel}), 32), \\ & \text{nonce} = \text{HMAC-SHA256}(MK, \text{UTF8}(\text{nonceLabel}))[0 \dots 11] \big)
+f_{\text{sym}}(MK, \text{keyLabel}, \text{nonceLabel}) = \big( & \text{key} = \text{HKDF-SHA256}(MK, \text{0x00}^{32}, \text{UTF8}(\text{keyLabel}), 32), \\
+& \text{nonce} = \text{HMAC-SHA256}(MK, \text{UTF8}(\text{nonceLabel}))[0 \dots 11] \big)
 \end{aligned}
 $$
 
@@ -234,6 +235,6 @@ $$\text{Keys}_{\text{msg}} = f_{\text{sym}}(MK, \mathtt{"ECP-AES256GCM-v1"}, \ma
 - **Replay Protection via Handshake Signature Tracking (`usedInitEks`):** Receivers store the SHA-256 hash of processed INIT packet signatures (`sigHash = Base64URL(SHA256(Sig))`). Re-sent or duplicated INIT packets matching any stored signature hash in `usedInitEks` (retaining up to 100 historical entries) are immediately discarded with `"INIT packet replay detected"`.
 - **Out-of-Order Message Handling & Skipped Key Cache (`skippedKeys`):** If a message arrives with sequence index $N > N_r$, intermediate message keys are derived via symmetric chain steps and stored in `skippedKeys` using the lookup key `${encodeBase64URL(DH_r.pk)}_${seq}`. The skipped key cache retains a maximum of 100 keys; older keys are pruned.
 - **Frame Validation Limits:**
-- **Sequence Progression:** Received index $N < N_r$ throws `"Message frame out of order or replayed"`.
-- **Maximum Gap Bound:** If $N - N_r > 2000$, decryption aborts with `"Excessive message gap"`.
-- **Destination Verification:** Receivers execute constant-time memory comparisons on identity bundles (`constantTimeCompare(rIdBytes, localPubBytes)`). Misrouted packets raise `"INIT packet destination misrouted"`.
+  - **Sequence Progression:** Received index $N < N_r$ throws `"Message frame out of order or replayed"`.
+  - **Maximum Gap Bound:** If $N - N_r > 2000$, decryption aborts with `"Excessive message gap"`.
+  - **Destination Verification:** Receivers execute constant-time memory comparisons on identity bundles (`constantTimeCompare(rIdBytes, localPubBytes)`). Misrouted packets raise `"INIT packet destination misrouted"`.
