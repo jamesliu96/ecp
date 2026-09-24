@@ -1,18 +1,21 @@
 # E2EE Clipboard Protocol (ECP)
 
-A serverless, pure-frontend web implementation of the End-to-End Encrypted Clipboard Protocol (ECP). ECP enables secure, peer-to-peer encrypted messaging and rich media sharing across untrusted transport channels without requiring a backend server or central authority.
+A serverless, pure-frontend web implementation of the End-to-End Encrypted Clipboard Protocol (ECP). ECP enables secure, peer-to-peer encrypted messaging and rich media sharing across untrusted out-of-band transport channels (such as instant messengers, email, social media, or physical clipboards) without requiring a backend server or central authority.
 
-## Core Architecture
+## Core Architecture & Layering
 
-- **Zero-Backend Processing:** Operates strictly on the client side. Messages and media are exchanged out-of-band via user-selected transport channels, such as instant messengers, email, shared documents, social media, QR codes, or physical notes.
-- **Local Persistence:** Encrypted session states, keys, and identity profiles reside entirely within client-side `IndexedDB` storage.
-- **Post-Quantum Cryptography (PQC):** Combines classical cryptography with NIST Level 5 PQC standards via `@noble` libraries (`@noble/ciphers`, `@noble/curves`, `@noble/hashes`, `@noble/post-quantum`).
+ECP strictly decouples its **Cryptographic Engine** from the **Transport Channel**:
+
+- **Cryptographic Engine (Application Layer):** Handles post-quantum hybrid key exchange, double-ratchet state progression, payload framing, and zero-trust local persistence strictly inside client-side `IndexedDB`.
+- **Transport Channel (Out-of-Band Layer):** ECP treats external communication channels as completely untrusted, opaque byte carriers. Sealed ASCII-safe envelopes (`e2e1:<Base64URL>`) can be copied to the OS clipboard and pasted into any existing messaging application, email, shared document, or QR code.
+- **Zero-Backend & Offline First:** Operates 100% on the client side without relying on API gateways, WebSocket servers, or signaling coordinators.
+- **Post-Quantum Cryptography (PQC):** Combines classical primitives with NIST Level 5 PQC standards via `@noble` libraries (`@noble/ciphers`, `@noble/curves`, `@noble/hashes`, `@noble/post-quantum`).
 
 ## Threat Model & Security Boundaries
 
 ### In-Scope Security Guarantees
 
-- **Transport Confidentiality & Integrity:** All ciphertexts copied to the clipboard remain secure even when transmitted over unencrypted or compromised communication channels.
+- **Transport Confidentiality & Integrity:** All wire ciphertexts remain secure even when transmitted over unencrypted, monitored, or compromised third-party channels.
 - **Post-Quantum Forward Secrecy & Break-In Recovery:** Every Double Ratchet turn continuously encapsulates a fresh **ML-KEM-1024** shared secret alongside classical **X25519** ECDH. Future quantum adversaries capturing transport payloads cannot decrypt historical or future sessions even if ephemeral ECDH keys are compromised.
 - **Authenticity & Non-Repudiation:** Initial handshake signatures using composite **Ed25519 + ML-DSA-87** prevent active person-in-the-middle (PITM) identity spoofing.
 
@@ -25,8 +28,8 @@ A serverless, pure-frontend web implementation of the End-to-End Encrypted Clipb
 
 1. **Identity Generation:** Automatically generates a persistent cryptographic identity upon initial application boot.
 2. **Peer Registration:** Users exchange out-of-band public identity bundles to add contacts.
-3. **Session Initialization:** The initiator generates an `INIT` payload packet and transmits it to the peer to establish a Hybrid Double Ratchet session.
-4. **Encrypted Exchange:** Ciphertexts and media Data URIs are copied directly to the clipboard, transmitted across any third-party app, and pasted by the recipient to decrypt.
+3. **Session Initialization:** The initiator generates an `INIT` payload packet and transmits it across any external channel to establish a Hybrid Double Ratchet session.
+4. **Encrypted Exchange:** Payload strings are generated, pasted into third-party communication apps, and parsed by the recipient's local instance to decrypt.
 
 ## Development & Build Pipeline
 
@@ -98,15 +101,15 @@ An Identity Bundle encapsulates a peer's public keys for identity verification a
 
 Used by the initiator to initiate a session, perform initial hybrid key agreement, and transmit the first encrypted message.
 
-| Relative Offset   | Field Name                                 | Type / Size   | Description                                                    |
-| ----------------- | ------------------------------------------ | ------------- | -------------------------------------------------------------- |
-| `0` – `11`        | **Binary Header**                          | `Bytes[12]`   | Standard 12-byte header (`Type = 0x01`)                        |
-| `12` – `4236`     | **Sender Identity Bundle**                 | `Bytes[4225]` | Initiator's public Identity Bundle                             |
-| `4237` – `8461`   | **Receiver Identity Bundle**               | `Bytes[4225]` | Target recipient's public Identity Bundle                      |
-| `8462` – `8493`   | **Ephemeral X25519 PK ($EK_{\text{pk}}$)** | `Bytes[32]`   | Ephemeral X25519 Public Key generated by initiator             |
-| `8494` – `10061`  | **ML-KEM Ciphertext ($KEM_{\text{ct}}$)**  | `Bytes[1568]` | Encapsulated shared secret against receiver's static ML-KEM PK |
-| `10062` – `14752` | **Composite Signature ($Sig$)**            | `Bytes[4691]` | Ed25519 Sig (64B) + ML-DSA-87 Sig (4627B) over setup data      |
-| `14753`+          | **Payload Ciphertext**                     | Variable      | AES-256-GCM ciphertext of initial message string + 16B Tag     |
+| Relative Offset   | Field Name                                  | Type / Size   | Description                                                    |
+| ----------------- | ------------------------------------------- | ------------- | -------------------------------------------------------------- |
+| `0` – `11`        | **Binary Header**                           | `Bytes[12]`   | Standard 12-byte header (`Type = 0x01`)                        |
+| `12` – `4236`     | **Sender Identity Bundle**                  | `Bytes[4225]` | Initiator's public Identity Bundle                             |
+| `4237` – `8461`   | **Receiver Identity Bundle**                | `Bytes[4225]` | Target recipient's public Identity Bundle                      |
+| `8462` – `8493`   | **Ephemeral X25519 PK ($EK\_{\text{pk}}$)** | `Bytes[32]`   | Ephemeral X25519 Public Key generated by initiator             |
+| `8494` – `10061`  | **ML-KEM Ciphertext ($KEM\_{\text{ct}}$)**  | `Bytes[1568]` | Encapsulated shared secret against receiver's static ML-KEM PK |
+| `10062` – `14752` | **Composite Signature ($Sig$)**             | `Bytes[4691]` | Ed25519 Sig (64B) + ML-DSA-87 Sig (4627B) over setup data      |
+| `14753`+          | **Payload Ciphertext**                      | Variable      | AES-256-GCM ciphertext of initial message string + 16B Tag     |
 
 #### 2. RESP Packet Layout (`0x02`)
 
@@ -130,16 +133,16 @@ Sent by the responder to complete initial key setup and establish receiving/send
 
 Carries active Hybrid Double Ratchet session messages.
 
-| Relative Offset | Field Name                                    | Type / Size   | Description                                                      |
-| --------------- | --------------------------------------------- | ------------- | ---------------------------------------------------------------- |
-| `0` – `11`      | **Binary Header**                             | `Bytes[12]`   | Standard 12-byte header (`Type = 0x03`)                          |
-| `12` – `27`     | **Conversation ID**                           | `Bytes[16]`   | First 16 bytes of SHA-256 hash over initial handshake parameters |
-| `28` – `59`     | **Ephemeral DH Key ($DH_{s,\text{pk}}$)**     | `Bytes[32]`   | Current ratchet step X25519 Public Key                           |
-| `60` – `1627`   | **ML-KEM Ciphertext ($KEM_{\text{ct}}$)**     | `Bytes[1568]` | Encapsulated secret for current ratchet turn                     |
-| `1628` – `3195` | **Ephemeral ML-KEM PK ($KEM_{s,\text{pk}}$)** | `Bytes[1568]` | Fresh ML-KEM Public Key for peer's subsequent ratchet turn       |
-| `3196` – `3199` | **Previous Chain Length ($PN$)**              | `UInt32BE`    | Number of messages sent in previous sending chain                |
-| `3200` – `3203` | **Message Sequence ($N_s$)**                  | `UInt32BE`    | Zero-indexed message counter in current sending chain            |
-| `3204`+         | **Payload Ciphertext**                        | Variable      | AES-256-GCM ciphertext of UTF-8 message body + 16B Tag           |
+| Relative Offset | Field Name                                     | Type / Size   | Description                                                      |
+| --------------- | ---------------------------------------------- | ------------- | ---------------------------------------------------------------- |
+| `0` – `11`      | **Binary Header**                              | `Bytes[12]`   | Standard 12-byte header (`Type = 0x03`)                          |
+| `12` – `27`     | **Conversation ID**                            | `Bytes[16]`   | First 16 bytes of SHA-256 hash over initial handshake parameters |
+| `28` – `59`     | **Ephemeral DH Key ($DH\_{s,\text{pk}}$)**     | `Bytes[32]`   | Current ratchet step X25519 Public Key                           |
+| `60` – `1627`   | **ML-KEM Ciphertext ($KEM\_{\text{ct}}$)**     | `Bytes[1568]` | Encapsulated secret for current ratchet turn                     |
+| `1628` – `3195` | **Ephemeral ML-KEM PK ($KEM\_{s,\text{pk}}$)** | `Bytes[1568]` | Fresh ML-KEM Public Key for peer's subsequent ratchet turn       |
+| `3196` – `3199` | **Previous Chain Length ($PN$)**               | `UInt32BE`    | Number of messages sent in previous sending chain                |
+| `3200` – `3203` | **Message Sequence ($N_s$)**                   | `UInt32BE`    | Zero-indexed message counter in current sending chain            |
+| `3204`+         | **Payload Ciphertext**                         | Variable      | AES-256-GCM ciphertext of UTF-8 message body + 16B Tag           |
 
 ### Authenticated Additional Data (AAD) Construction
 
@@ -165,7 +168,11 @@ _(Note: $\text{msgHdr}$ is the unencrypted 3,192-byte header payload spanning of
 
 Symmetric encryption keys and nonces are derived from a master key ($MK$) using:
 
-$$\begin{aligned} f_{\text{sym}}(MK, \text{keyLabel}, \text{nonceLabel}) = \big( & \text{key} = \text{HKDF-SHA256}(MK, \text{0x00}^{32}, \text{UTF8}(\text{keyLabel}), 32), \\ & \text{nonce} = \text{HMAC-SHA256}(MK, \text{UTF8}(\text{nonceLabel}))[0 \dots 11] \big) \end{aligned}$$
+$$
+\begin{aligned}
+f_{\text{sym}}(MK, \text{keyLabel}, \text{nonceLabel}) = \big( & \text{key} = \text{HKDF-SHA256}(MK, \text{0x00}^{32}, \text{UTF8}(\text{keyLabel}), 32), \\ & \text{nonce} = \text{HMAC-SHA256}(MK, \text{UTF8}(\text{nonceLabel}))[0 \dots 11] \big)
+\end{aligned}
+$$
 
 #### 1. INIT Handshake Key Schedule
 
