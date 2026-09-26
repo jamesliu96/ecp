@@ -191,7 +191,7 @@ $$\text{Keys}_{\text{init}} = f_{\text{sym}}(MK_{\text{init}}, \mathtt{"ECP-AES2
 
 $$Sig = \text{Sign}_{\text{Composite}}\left(\mathtt{"ECP-INIT-v1"} \parallel SenderID \parallel ReceiverID \parallel EK_{\text{pk}} \parallel KEM_{\text{ct}}\right)$$
 
-_(Constructed by concatenating Ed25519 signature [64 bytes] and ML-DSA-87 signature [4,627 bytes])._
+(Constructed by concatenating Ed25519 signature [64 bytes] and ML-DSA-87 signature [4,627 bytes]).
 
 4. **Conversation Identifier ($\text{ConvID}$):**
 
