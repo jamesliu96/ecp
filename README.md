@@ -160,7 +160,7 @@ $$\text{AAD}_{\text{RESP}} = \text{Header}_{12\text{B}}$$
 
 $$\text{AAD}_{\text{MSG}} = \mathtt{"ECP-MSG-v1"} \parallel \text{ConvID}_{16\text{B}} \parallel \text{SenderIdentity}_{4225\text{B}} \parallel \text{ReceiverIdentity}_{4225\text{B}} \parallel \text{msgHdr}_{3192\text{B}}$$
 
-_(Note: $\text{msgHdr}$ is the unencrypted 3,192-byte header payload spanning offsets `12` through `3203` of the MSG packet)._
+(Note: $\text{msgHdr}$ is the unencrypted 3,192-byte header payload spanning offsets `12` through `3203` of the MSG packet).
 
 ### Cryptographic Derivations & Key Schedules
 
